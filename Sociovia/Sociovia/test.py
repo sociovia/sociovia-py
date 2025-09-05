@@ -1126,12 +1126,15 @@ def handle_options():
 
         return resp
 
-
+@app.route('/')
+def index():
+    return "SOCIOVIA running. POST credentials to endpoints to fetch data."
 
 # ---------------- Run (dev) ----------------
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
