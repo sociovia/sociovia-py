@@ -829,7 +829,7 @@ def after_request(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
     return response
 from flask import request, jsonify
-from models import Workspace  # adjust import if needed
+from Sociova.Sociovia.models import Workspace  # adjust import if needed
  # your SQLAlchemy db instance
 USER_WORKSPACES = {
     "9": {"id": 9, "name": "Shiva's Workspace", "role": "Owner"},
@@ -1132,6 +1132,7 @@ def handle_options():
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
