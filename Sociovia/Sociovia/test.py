@@ -420,14 +420,19 @@ def api_admin_reject(user_id: int):
     return jsonify({"success": True, "message": f"user_{user.id}_rejected"}), 200
 
 
-@app.route("/api/admin/action", methods=["GET"])
+from flask import redirect, render_template_string
+
+@app.route("/admin/action", methods=["GET"])
 def api_admin_action():
     token = request.args.get("token")
     if not token:
+        logger.warning("admin action hit with no token")
         return jsonify({"success": False, "error": "token_required"}), 400
 
     try:
         payload = load_action_token(token, ADMIN_LINK_TTL_HOURS * 3600)
+        logger.info("admin link payload: %s", payload)
+
         user_id = payload.get("user_id")
         action = payload.get("action")
         reason = payload.get("reason", "Rejected via admin link")
@@ -445,7 +450,8 @@ def api_admin_action():
                 send_mail_to(user.email, "Your Sociovia account is approved", email_body)
             except Exception:
                 logger.exception("Failed to send approval email (admin link)")
-            return jsonify({"success": True, "message": f"user_{user.id}_approved"}), 200
+            # redirect to front-end success page
+            return redirect(f"{APP_BASE_URL.rstrip('/')}/admin/complete?status=approved&uid={user.id}")
 
         if action == "reject":
             user.status = "rejected"
@@ -457,16 +463,13 @@ def api_admin_action():
                 send_mail_to(user.email, "Update on your Sociovia account", email_body)
             except Exception:
                 logger.exception("Failed to send rejection email (admin link)")
-            return jsonify({"success": True, "message": f"user_{user.id}_rejected"}), 200
+            return redirect(f"{APP_BASE_URL.rstrip('/')}/admin/complete?status=rejected&uid={user.id}")
 
         return jsonify({"success": False, "error": "invalid_action"}), 400
 
-    except Exception:
-        logger.exception("Token validation failed")
-        return jsonify({"success": False, "error": "invalid_or_expired_token"}), 400
-    
-
-    
+    except Exception as e:
+        logger.exception("Token validation failed: %s", e)
+        return render_template_string("<h3>Invalid or expired admin link</h3><p>Please contact support.</p>"), 400
 # ---------------- Workspace Model + Routes ----------------
 import os
 from werkzeug.utils import secure_filename
@@ -1130,6 +1133,7 @@ def index():
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
