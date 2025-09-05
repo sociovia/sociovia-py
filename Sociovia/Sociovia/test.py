@@ -15,9 +15,9 @@ from flask_cors import CORS
 #from config import Config
 from Sociovia.Sociovia.config import Config
 
-from models import db, User, Admin,SocialAccount  # make sure models.py exports User, Admin
-from mailer import send_mail
-from tokens import make_action_token, load_action_token
+from Sociovia.Sociovia.models import db, User, Admin,SocialAccount  # make sure models.py exports User, Admin
+from Sociovia.Sociovia.mailer import send_mail
+from Sociovia.Sociovia.tokens import make_action_token, load_action_token
 from utils import log_action, valid_password, generate_code, load_email_template
 
 # ---------------- Setup ----------------
@@ -1132,4 +1132,5 @@ def handle_options():
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
