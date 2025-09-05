@@ -2,7 +2,7 @@ import re
 import json
 import random
 from flask import current_app, render_template_string
-from models import db, AuditLog
+from Sociovia.Sociovia.models import db, AuditLog
 
 def log_action(actor, action, user_id=None, meta=None):
     """Log an action to the audit trail"""
