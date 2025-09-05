@@ -38,6 +38,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 # ---------------- Session + CORS ----------------
 FRONTEND_ORIGINS = [
      "https://sociovia-c9473.web.app",
+    "https://sociovia.com",
     "http://127.0.0.1:8080"
 ]
 
@@ -1157,6 +1158,7 @@ def index():
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
