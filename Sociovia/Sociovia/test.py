@@ -422,6 +422,9 @@ def api_admin_reject(user_id: int):
 
 from flask import redirect, render_template_string
 
+from urllib.parse import unquote
+from flask import redirect, render_template_string
+
 @app.route("/admin/action", methods=["GET"])
 def api_admin_action():
     token = request.args.get("token")
@@ -429,17 +432,39 @@ def api_admin_action():
         logger.warning("admin action hit with no token")
         return jsonify({"success": False, "error": "token_required"}), 400
 
-    try:
-        payload = load_action_token(token, ADMIN_LINK_TTL_HOURS * 3600)
-        logger.info("admin link payload: %s", payload)
+    # Log origin + DB URI for debugging (remove in prod)
+    logger.info("admin action request from=%s db=%s", request.remote_addr, app.config.get("SQLALCHEMY_DATABASE_URI"))
 
+    try:
+        # Try unquoting if email client double-encoded
+        try:
+            payload = load_action_token(unquote(token), ADMIN_LINK_TTL_HOURS * 3600)
+        except Exception:
+            payload = load_action_token(token, ADMIN_LINK_TTL_HOURS * 3600)
+
+        logger.info("admin link payload: %s", payload)
         user_id = payload.get("user_id")
         action = payload.get("action")
         reason = payload.get("reason", "Rejected via admin link")
 
-        user = User.query.get_or_404(user_id)
+        # Safer lookup (no immediate abort)
+        user = User.query.filter_by(id=user_id).first()
+        if not user:
+            # log all known user ids to help debug
+            try:
+                ids = [u.id for u in User.query.with_entities(User.id).all()]
+            except Exception:
+                ids = "<couldn't fetch ids>"
+            logger.warning("admin link: user id %s not found. existing_user_ids=%s", user_id, ids)
+            return render_template_string(
+                "<h3>Invalid admin link</h3><p>User not found. Contact support.</p>"
+            ), 400
+
         if user.status != "under_review":
-            return jsonify({"success": False, "error": "user_not_in_review"}), 400
+            return render_template_string(
+                "<h3>Action not allowed</h3><p>User status: {{status}}</p>",
+                status=user.status
+            ), 400
 
         if action == "approve":
             user.status = "approved"
@@ -450,7 +475,6 @@ def api_admin_action():
                 send_mail_to(user.email, "Your Sociovia account is approved", email_body)
             except Exception:
                 logger.exception("Failed to send approval email (admin link)")
-            # redirect to front-end success page
             return redirect(f"{APP_BASE_URL.rstrip('/')}/admin/complete?status=approved&uid={user.id}")
 
         if action == "reject":
@@ -465,7 +489,7 @@ def api_admin_action():
                 logger.exception("Failed to send rejection email (admin link)")
             return redirect(f"{APP_BASE_URL.rstrip('/')}/admin/complete?status=rejected&uid={user.id}")
 
-        return jsonify({"success": False, "error": "invalid_action"}), 400
+        return render_template_string("<h3>Invalid action</h3>"), 400
 
     except Exception as e:
         logger.exception("Token validation failed: %s", e)
@@ -1133,6 +1157,7 @@ def index():
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
