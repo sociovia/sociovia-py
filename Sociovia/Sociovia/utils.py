@@ -1,7 +1,8 @@
+import os
 import re
 import json
 import random
-from flask import current_app, render_template_string
+from flask import current_app
 from Sociovia.Sociovia.models import db, AuditLog
 
 def log_action(actor, action, user_id=None, meta=None):
@@ -28,14 +29,18 @@ def generate_code(length=6):
 def load_email_template(template_name, context):
     """Load and render email template with context variables"""
     try:
-        with open(f'templates/emails/{template_name}', 'r') as f:
+        # Use absolute path relative to this file
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        template_path = os.path.join(base_dir, "templates", "emails", template_name)
+
+        with open(template_path, "r", encoding="utf-8") as f:
             template_content = f.read()
-        
+
         # Simple template variable replacement
         for key, value in context.items():
-            template_content = template_content.replace(f'{{{{{key}}}}}', str(value))
-            
+            template_content = template_content.replace(f"{{{{{key}}}}}", str(value))
+
         return template_content
     except FileNotFoundError:
-        print(f"Email template {template_name} not found")
+        print(f"Email template {template_name} not found at {template_path}")
         return f"Template {template_name} not found"
