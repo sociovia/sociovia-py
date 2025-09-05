@@ -58,11 +58,7 @@ app.config.setdefault("CORS_HEADERS", "Content-Type,Authorization,X-Requested-Wi
 CORS(
     app,
     supports_credentials=True,
-    resources={
-        r"/api/*": {"origins": FRONTEND_ORIGINS},
-        r"/uploads/*": {"origins": FRONTEND_ORIGINS},
-        r"/admin/*": {"origins": FRONTEND_ORIGINS},
-    },
+    resources={r"/*": {"origins": "*"}},
     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-User-Id", "X-User-Email"],
     expose_headers=["Content-Type"],
 )
@@ -1134,6 +1130,7 @@ def index():
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
