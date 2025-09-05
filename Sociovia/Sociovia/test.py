@@ -130,7 +130,7 @@ def require_admin_session():
 # Config helpers
 VERIFY_TTL_MIN = int(app.config.get("VERIFY_TTL_MIN", os.getenv("VERIFY_TTL_MIN", 15)))
 ADMIN_LINK_TTL_HOURS = int(app.config.get("ADMIN_LINK_TTL_HOURS", os.getenv("ADMIN_LINK_TTL_HOURS", 48)))
-APP_BASE_URL = app.config.get("APP_BASE_URL", os.getenv("APP_BASE_URL", ""))
+APP_BASE_URL = "https://sociovia-py.onrender.com"
 
 # ---------------- Public APIs ----------------
 @app.route("/api/signup", methods=["POST"])
@@ -1130,6 +1130,7 @@ def index():
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
