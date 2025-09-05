@@ -11,7 +11,7 @@ pip install -r requirements.txt
 # alembic upgrade head
 
 # Export environment variables
-export FLASK_APP=app.py
+export FLASK_APP=test.py
 export FLASK_ENV=production
 
 # Start Flask server (Render expects it to bind 0.0.0.0:$PORT)
