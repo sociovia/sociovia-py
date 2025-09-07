@@ -55,13 +55,26 @@ app.config.update(
 Session(app)
 
 app.config.setdefault("CORS_HEADERS", "Content-Type,Authorization,X-Requested-With,X-User-Id,X-User-Email")
-
+""""
 CORS(
     app,
     supports_credentials=True,
     resources={r"/*": {"origins": "*"}},
     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-User-Id", "X-User-Email"],
     expose_headers=["Content-Type"],
+)
+"""
+# Update your CORS settings to include the specific endpoints
+CORS(
+    app,
+    supports_credentials=True,
+    resources={
+        r"/api/*": {
+            "origins": FRONTEND_ORIGINS,
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "X-User-Id", "X-User-Email"],
+            "expose_headers": ["Content-Type"]
+        }
+    }
 )
 
 # ---------------- DB Init ----------------
@@ -1154,10 +1167,70 @@ def handle_options():
 def index():
     return "SOCIOVIA running. POST credentials to endpoints to fetch data."
 
+
+# Add to your Flask app.py
+
+@app.route("/api/workspaces", methods=["GET"])
+def api_workspaces():
+    """Return all workspaces for the current user"""
+    user = get_user_from_request(require=True)
+    if not user:
+        return jsonify({"success": False, "error": "not_authenticated"}), 401
+    
+    # Get all workspaces for this user
+    workspaces = Workspace.query.filter_by(user_id=user.id).all()
+    
+    result = []
+    for workspace in workspaces:
+        # Format each workspace to match the expected frontend structure
+        result.append({
+            "id": workspace.id,
+            "name": workspace.business_name,
+            "sector": workspace.industry,
+            "role": "Owner",  # Default role
+            "created_at": workspace.created_at.isoformat() if workspace.created_at else None,
+            "logo": workspace.logo_url if hasattr(workspace, 'logo_url') else None
+        })
+    
+    return jsonify({"success": True, "workspaces": result}), 200
+
+@app.route("/api/workspace/list", methods=["GET"])
+def api_workspace_list():
+    """Alternative endpoint for workspace list"""
+    return api_workspaces()  # Reuse the same implementation
+
+@app.route("/api/workspace/metrics", methods=["GET"])
+def api_workspace_metrics():
+    """Return metrics for workspaces"""
+    user = get_user_from_request(require=True)
+    if not user:
+        return jsonify({"success": False, "error": "not_authenticated"}), 401
+    
+    workspaces = Workspace.query.filter_by(user_id=user.id).all()
+    metrics = {}
+    
+    for workspace in workspaces:
+        # Create mock metrics for each workspace (replace with real data)
+        metrics[workspace.id] = {
+            "workspace_id": workspace.id,
+            "total_spend": 10000 + workspace.id * 100,
+            "leads": 500 + workspace.id * 50,
+            "active_campaigns": (workspace.id % 5) + 1,
+            "reach": 10000 + workspace.id * 1000,
+            "impressions": 50000 + workspace.id * 5000,
+            "clicks": 3000 + workspace.id * 300,
+            "ctr": 6.0 - (workspace.id % 5) * 0.2,
+            "cpm": 15.0 + (workspace.id % 5) * 0.5,
+            "last_updated": datetime.utcnow().isoformat()
+        }
+    
+    return jsonify({"success": True, "metrics": metrics}), 200
+
 # ---------------- Run (dev) ----------------
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
