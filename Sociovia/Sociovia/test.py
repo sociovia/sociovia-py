@@ -1441,10 +1441,163 @@ def api_reset_password():
     return jsonify({"success": True, "message": "password_reset_success"}), 200
 
 
+
+
+
+# ---------------- Password reset endpoints (consolidated) ----------------
+from werkzeug.security import generate_password_hash
+from itsdangerous import URLSafeTimedSerializer
+
+# TTL for password reset tokens (seconds). Can be overridden via env/config.
+RESET_TTL_SECONDS = int(app.config.get("RESET_TTL_SECONDS", os.getenv("RESET_TTL_SECONDS", 3600)))
+# Also provide hours for human messaging if needed
+RESET_TTL_HOURS = max(1, int(RESET_TTL_SECONDS // 3600))
+
+# FRONTEND base used for reset link (point to your frontend site)
+#FRONTEND_BASE_URL = app.config.get("FRONTEND_BASE_URL", os.getenv("FRONTEND_BASE_URL", "https://sociovia.com"))
+
+def _build_reset_url(token: str) -> str:
+    return f"{FRONTEND_BASE_URL.rstrip('/')}/reset-password?token={token}"
+
+@app.route("/api/password/forgot", methods=["POST"])
+def api_password_forgot():
+    """
+    Request a password reset. Body: { "email": "<email>" }.
+    Sends a single-use token link to the user's email (token TTL controlled by RESET_TTL_SECONDS).
+    """
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"success": False, "error": "email_required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        # Do NOT reveal that the email is missing: return generic success
+        logger.info("Password reset requested for unknown email: %s", email)
+        return jsonify({"success": True, "message": "If the email exists, a reset link has been sent."}), 200
+
+    try:
+        # Create signed reset token (stateless). Uses your existing make_action_token function.
+        token = make_action_token({
+            "user_id": user.id,
+            "action": "reset_password",
+            "issued_at": datetime.utcnow().isoformat()
+        })
+
+        reset_url = _build_reset_url(token)
+
+        # Try to render your template; pass both reset_url and reset_link names
+        try:
+            email_body = load_email_template(
+                "password_reset.txt",
+                {"name": user.name or user.email, "reset_url": reset_url, "reset_link": reset_url, "ttl_hours": RESET_TTL_HOURS}
+            )
+        except Exception:
+            # Fallback to simple text if template missing or rendering fails
+            email_body = (
+                f"Hi {user.name or user.email},\n\n"
+                f"We received a request to reset your password.\n\n"
+                f"Click the link below to reset your password (valid for {RESET_TTL_HOURS} hour(s)):\n\n"
+                f"{reset_url}\n\n"
+                "If you didn't request this, please ignore this email.\n\n"
+                "Thanks,\nSociovia Team\nhttps://sociovia.com"
+            )
+
+        send_mail_to(user.email, "Sociovia — Password reset instructions", email_body)
+        log_action("system", "password_reset_requested", user.id)
+    except Exception as e:
+        logger.exception("Failed to process forgot-password for %s", email)
+        # Keep response generic for security
+        return jsonify({"success": False, "error": "internal_error"}), 500
+
+    return jsonify({"success": True, "message": "If the email exists, a reset link has been sent."}), 200
+
+
+# Compatibility alias (optional) - forwards to canonical endpoint
+@app.route("/api/forgot-password", methods=["POST"])
+def api_forgot_password_alias():
+    return api_password_forgot()
+
+
+@app.route("/api/password/forgot/validate", methods=["GET"])
+def api_password_reset_validate():
+    """
+    Validate a reset token -> returns {"valid": True, "user_id": ...} or {"valid": False, "error": "..."}.
+    Accepts token as query param: ?token=...
+    """
+    token = request.args.get("token") or ""
+    if not token:
+        return jsonify({"valid": False, "error": "token_required"}), 400
+    try:
+        payload = load_action_token(token, RESET_TTL_SECONDS)
+        if payload.get("action") != "reset_password":
+            return jsonify({"valid": False, "error": "invalid_action"}), 400
+        user_id = payload.get("user_id")
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({"valid": False, "error": "user_not_found"}), 404
+        return jsonify({"valid": True, "user_id": user_id, "email": user.email}), 200
+    except Exception as e:
+        logger.exception("Reset token validate failed: %s", e)
+        return jsonify({"valid": False, "error": "invalid_or_expired_token"}), 400
+
+
+@app.route("/api/password/reset", methods=["POST"])
+def api_password_reset():
+    """
+    Reset the password. Body: { token: string, password: string }
+    """
+    data = request.get_json() or {}
+    token = (data.get("token") or "").strip()
+    new_password = data.get("password") or ""
+
+    if not token or not new_password:
+        return jsonify({"success": False, "error": "token_and_password_required"}), 400
+
+    # Basic password policy check (reuse valid_password from utils)
+    if not valid_password(new_password):
+        return jsonify({"success": False, "error": "password_policy_failed"}), 400
+
+    try:
+        payload = load_action_token(token, RESET_TTL_SECONDS)
+    except Exception as e:
+        logger.warning("Invalid/expired reset token: %s", e)
+        return jsonify({"success": False, "error": "invalid_or_expired_token"}), 400
+
+    if payload.get("action") != "reset_password":
+        return jsonify({"success": False, "error": "invalid_action"}), 400
+
+    user_id = payload.get("user_id")
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"success": False, "error": "user_not_found"}), 404
+
+    # All good: update password
+    try:
+        user.password_hash = generate_password_hash(new_password)
+        db.session.add(user)
+        db.session.commit()
+        log_action("system", "password_reset_completed", user.id)
+
+        # Try to send confirmation email (non-fatal if it fails)
+        try:
+            email_body = load_email_template("password_reset_confirm.txt", {"name": user.name or user.email})
+        except Exception:
+            email_body = f"Hi {user.name or user.email},\n\nYour password was successfully changed.\n\nIf you did not request this, please contact support.\n\nSociovia Team"
+        send_mail_to(user.email, "Your Sociovia password has been changed", email_body)
+
+        return jsonify({"success": True, "message": "password_reset_success"}), 200
+    except Exception as e:
+        logger.exception("Failed to update password for user %s: %s", user_id, e)
+        return jsonify({"success": False, "error": "internal_server_error"}), 500
+
+
+
 # ---------------- Run (dev) ----------------
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
