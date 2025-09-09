@@ -1252,7 +1252,7 @@ RESET_TTL_SECONDS = int(app.config.get("RESET_TTL_SECONDS", os.getenv("RESET_TTL
 RESET_TTL_HOURS = max(1, int(RESET_TTL_SECONDS // 3600))
 
 # FRONTEND base used for reset link (point to your frontend site)
-#FRONTEND_BASE_URL = app.config.get("FRONTEND_BASE_URL", os.getenv("FRONTEND_BASE_URL", "https://sociovia.com"))
+FRONTEND_BASE_URL = app.config.get("FRONTEND_BASE_URL", os.getenv("FRONTEND_BASE_URL", "https://sociovia.com"))
 
 def _build_reset_url(token: str) -> str:
     return f"{FRONTEND_BASE_URL.rstrip('/')}/reset-password?token={token}"
@@ -1395,6 +1395,7 @@ def api_password_reset():
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
