@@ -27,7 +27,9 @@ def generate_code(length=6):
     return "".join(str(random.randint(0, 9)) for _ in range(length))
 """
 def load_email_template(template_name, context):
-    """Load and render email template with context variables"""
+    """
+#Load and render email template with context variables
+"""
     try:
         # Use absolute path relative to this file
         base_dir = os.path.dirname(os.path.abspath(__file__))
