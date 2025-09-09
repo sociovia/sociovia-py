@@ -1344,10 +1344,108 @@ def api_password_reset():
         return jsonify({"success": False, "error": "internal_server_error"}), 500
 
 
+
+
+
+# Constants (near other config constants)
+RESET_TTL_SECONDS = int(os.getenv("RESET_TTL_SECONDS", 3600))  # 1 hour by default
+
+# POST /api/forgot-password
+@app.route("/api/forgot-password", methods=["POST"])
+def api_forgot_password():
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"success": False, "error": "email_required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        # Don't reveal existence: return success to avoid user enumeration
+        return jsonify({"success": True, "message": "If this email exists you'll receive reset instructions."}), 200
+
+    try:
+        # Create signed reset token (stateless)
+        token = make_action_token({
+            "user_id": user.id,
+            "action": "reset_password",
+            "issued_at": datetime.utcnow().isoformat()
+        })
+
+        # Build reset URL that your frontend will handle
+        reset_url = f"{APP_BASE_URL.rstrip('/')}/reset-password?token={token}"
+
+        # Render email template (make sure load_email_template accepts variables)
+        try:
+            email_body = load_email_template("password_reset.txt", {"name": user.name or user.email, "reset_url": reset_url})
+        except Exception:
+            # Fallback to simple text if template render fails
+            email_body = f"Hi {user.name or user.email},\n\nClick to reset your password:\n{reset_url}\n\nIf you didn't request this, ignore.\n\nSociovia Team"
+
+        # Send the mail
+        send_mail_to(user.email, "Reset your Sociovia password", email_body)
+
+        # (Optional) store an audit log
+        log_action("system", "password_reset_requested", user.id)
+    except Exception as e:
+        logger.exception("Failed to process forgot-password for %s", email)
+        # Do not reveal internals to client
+        return jsonify({"success": False, "error": "internal_error"}), 500
+
+    return jsonify({"success": True, "message": "If this email exists you'll receive reset instructions."}), 200
+
+
+# POST /api/reset-password
+@app.route("/api/reset-password", methods=["POST"])
+def api_reset_password():
+    """
+    Accepts JSON { token, password } and attempts to validate the signed token and set new password.
+    """
+    data = request.get_json() or {}
+    token = data.get("token")
+    new_password = data.get("password") or ""
+
+    if not token or not new_password:
+        return jsonify({"success": False, "error": "token_and_password_required"}), 400
+
+    # Validate password policy if you have one
+    if not valid_password(new_password):
+        return jsonify({"success": False, "error": "password_policy_failed"}), 400
+
+    try:
+        payload = load_action_token(token, RESET_TTL_SECONDS)
+    except Exception as e:
+        logger.warning("Invalid/expired reset token: %s", e)
+        return jsonify({"success": False, "error": "invalid_or_expired_token"}), 400
+
+    user_id = payload.get("user_id")
+    action = payload.get("action")
+    if action != "reset_password" or not user_id:
+        return jsonify({"success": False, "error": "invalid_token_payload"}), 400
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"success": False, "error": "user_not_found"}), 404
+
+    # Set new password
+    user.password_hash = generate_password_hash(new_password)
+    db.session.commit()
+    log_action("system", "password_reset_completed", user.id)
+
+    try:
+        email_body = load_email_template("password_reset_confirm.txt", {"name": user.name or user.email})
+        send_mail_to(user.email, "Your password was changed", email_body)
+    except Exception:
+        # If confirm template missing, it's not fatal
+        logger.info("Password changed, but confirmation email failed to send.")
+
+    return jsonify({"success": True, "message": "password_reset_success"}), 200
+
+
 # ---------------- Run (dev) ----------------
 if __name__ == "__main__":
     debug_flag = os.getenv("FLASK_ENV", "development") != "production"
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
