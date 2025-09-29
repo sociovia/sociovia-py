@@ -21,7 +21,7 @@ from mailer import send_mail
 from tokens import make_action_token, load_action_token
 from utils import log_action, valid_password, generate_code, load_email_template
 """
-from Sociovia.Sociovia.models import db, User, Admin,SocialAccount  # make sure models.py exports User, Admin
+from Sociovia.Sociovia.models import db, User, Admin,SocialAccount,Workspace # make sure models.py exports User, Admin
 from Sociovia.Sociovia.mailer import send_mail
 from Sociovia.Sociovia.tokens import make_action_token, load_action_token
 from Sociovia.Sociovia.utils import log_action, valid_password, generate_code, load_email_template      
@@ -922,7 +922,7 @@ def after_request(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
     return response
 from flask import request, jsonify
-from models import Workspace  # adjust import if needed
+ # adjust import if needed
  # your SQLAlchemy db instance
 USER_WORKSPACES = {
     "9": {"id": 9, "name": "Shiva's Workspace", "role": "Owner"},
@@ -2635,6 +2635,7 @@ if __name__ == "__main__":
         db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
