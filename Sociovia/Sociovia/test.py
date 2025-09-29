@@ -10,15 +10,28 @@ from email_validator import validate_email, EmailNotValidError
 from dotenv import load_dotenv
 from sqlalchemy.orm import DeclarativeBase
 from flask_session import Session
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 
 #from config import Config
-from Sociovia.Sociovia.config import Config
+"""
+from config import Config
 
+from models import db, User, Admin,SocialAccount  # make sure models.py exports User, Admin
+from mailer import send_mail
+from tokens import make_action_token, load_action_token
+from utils import log_action, valid_password, generate_code, load_email_template
+"""
 from Sociovia.Sociovia.models import db, User, Admin,SocialAccount  # make sure models.py exports User, Admin
 from Sociovia.Sociovia.mailer import send_mail
 from Sociovia.Sociovia.tokens import make_action_token, load_action_token
-from Sociovia.Sociovia.utils import log_action, valid_password, generate_code, load_email_template
+from Sociovia.Sociovia.utils import log_action, valid_password, generate_code, load_email_template      
+from Sociovia.config import Config
+from Sociovia.models import db, User, Admin,SocialAccount  # make sure models.py exports User, Admin
+from Sociovia.mailer import send_mail
+from Sociovia.tokens import make_action_token, load_action_token
+from Sociovia.utils import log_action, valid_password, generate_code, load_email_template
+  
+ 
 
 # ---------------- Setup ----------------
 load_dotenv()
@@ -39,6 +52,9 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 FRONTEND_ORIGINS = [
      "https://sociovia-c9473.web.app",
     "https://sociovia.com",
+    "www.sociovia.com",
+    "https://www.sociovia.com",
+    "http://127.0.0.1:8080",
     "http://127.0.0.1:8080"
 ]
 
@@ -51,7 +67,14 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     PERMANENT_SESSION_LIFETIME=timedelta(days=7)
 )
-
+# OAuth / Facebook config — override with environment in production
+FB_APP_ID = os.getenv("FB_APP_ID", "1782321995750055")
+FB_APP_SECRET = os.getenv("FB_APP_SECRET", "f2e945de7d1ef2bfb2ce85699aead868")
+FB_API_VERSION = os.getenv("FB_API_VERSION", "v16.0")
+APP_BASE_URL = os.getenv("APP_BASE_URL", "https://6136l5dn-5000.inc1.devtunnels.ms")
+OAUTH_REDIRECT_BASE = os.getenv("OAUTH_REDIRECT_BASE", APP_BASE_URL)
+# default scopes for facebook-first flow; instagram scopes will be requested later when linking IG
+OAUTH_SCOPES = os.getenv("OAUTH_SCOPES", "pages_show_list,pages_read_engagement,ads_management")
 Session(app)
 
 app.config.setdefault("CORS_HEADERS", "Content-Type,Authorization,X-Requested-With,X-User-Id,X-User-Email")
@@ -436,7 +459,7 @@ def api_admin_reject(user_id: int):
 
 from flask import redirect, render_template_string
 
-from urllib.parse import unquote
+from urllib.parse import unquote, urlencode
 from flask import redirect, render_template_string
 
 @app.route("/admin/action", methods=["GET"])
@@ -614,6 +637,7 @@ def get_user_from_request(require: bool = True):
     if require:
         return None
     return None
+
 @app.route("/api/workspace/setup", methods=["POST"])
 def api_workspace_setup():
     """
@@ -785,7 +809,7 @@ def api_workspace_setup():
 @app.route("/api/workspace", methods=["GET"])
 def api_workspace_get():
     """Return workspace for current user (if any)."""
-    user_id = session.get("user_id")
+    user_id = get_user_from_request("user_id")
     if not user_id:
         return jsonify({"success": False, "error": "not_authenticated"}), 401
     workspace = Workspace.query.filter_by(user_id=user_id).first()
@@ -866,7 +890,7 @@ def after_request(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
     return response
 from flask import request, jsonify
-from Sociovia.Sociovia.models import Workspace  # adjust import if needed
+from models import Workspace  # adjust import if needed
  # your SQLAlchemy db instance
 USER_WORKSPACES = {
     "9": {"id": 9, "name": "Shiva's Workspace", "role": "Owner"},
@@ -1226,9 +1250,6 @@ def api_workspace_metrics():
     
     return jsonify({"success": True, "metrics": metrics}), 200
 
-
-
-
 # ---------------- Password reset endpoints ----------------
 from werkzeug.security import generate_password_hash
 from itsdangerous import URLSafeTimedSerializer
@@ -1237,10 +1258,6 @@ from itsdangerous import URLSafeTimedSerializer
 RESET_TTL_HOURS = int(app.config.get("RESET_TTL_HOURS", os.getenv("RESET_TTL_HOURS", 2)))
 # Constants (near other config constants)
 RESET_TTL_SECONDS = int(os.getenv("RESET_TTL_SECONDS", 3600))  # 1 hour by default
-
-
-
-
 
 # ---------------- Password reset endpoints (consolidated) ----------------
 from werkzeug.security import generate_password_hash
@@ -1389,27 +1406,1201 @@ def api_password_reset():
         logger.exception("Failed to update password for user %s: %s", user_id, e)
         return jsonify({"success": False, "error": "internal_server_error"}), 500
 
+# ---------------- FastAPI microservice for Facebook Graph API proxy ----------------
+
+# ---------------- CORS preflight handler ----------------
+@app.before_request
+def handle_options():
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        headers = resp.headers
+        headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "")
+        headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, X-User-Id, X-User-Email"
+        headers["Access-Control-Allow-Credentials"] = "true"
+        return resp
+
+@app.after_request
+def after_request(response):
+    origin = request.headers.get("Origin")
+    if origin in ["http://localhost:5173", "https://sociovia.com", "https://6136l5dn-5000.inc1.devtunnels.ms","http://localhost:8080","https://localhost:3000","https://localhost:8080","http://localhost:8080","http://localhost:8080","https://sociovia-c9473.web.app","https://sociovia.com","https://127.0.0.1","http://127.0.0.1:8080"]:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    return response
+
+# ---------------- Facebook-first OAuth routes (compatibility) ----------------
+def _build_fb_oauth_url(state: str, scopes: str = None):
+    client_id = FB_APP_ID
+    redirect_uri = f"{OAUTH_REDIRECT_BASE.rstrip('/')}/api/oauth/facebook/callback"
+    use_scopes = scopes or OAUTH_SCOPES
+    params = {
+        'client_id': client_id,
+        'redirect_uri': redirect_uri,
+        'scope': use_scopes,
+        'response_type': 'code',
+        'state': state,
+    }
+    return f"https://www.facebook.com/{FB_API_VERSION}/dialog/oauth?{urlencode(params)}"
+
+# Support legacy /api/oauth/instagram/connect by routing to FB connect for now (compat)
+@app.route('/api/oauth/facebook/connect', methods=['GET'])
+@app.route('/api/oauth/instagram/connect', methods=['GET'])
+def oauth_facebook_connect():
+    state = request.args.get('state') or ''
+    logger.info('Starting Facebook connect (state=%s)', state)
+    auth_url = _build_fb_oauth_url(state=state)
+    return redirect(auth_url)
+
+# Add this at the top of your Flask config or constants
+OAUTH_SCOPES = [
+    # Pages
+    "pages_show_list",            # List all Pages the user manages
+    "pages_read_engagement",      # Read Page insights and engagement
+    "pages_manage_posts",         # Create, edit, delete Page posts
+    "pages_manage_engagement",    # Moderate comments, respond to messages
+    "pages_read_user_content",    # Read user-generated content on the Page
+    "pages_manage_metadata",      # Read Page settings, roles, metadata
+    "pages_manage_ads",           # Manage ads linked to Pages
+
+    # Ads & Business
+    "ads_management",             # Create/update/delete ad campaigns, sets, and ads
+    "ads_read",                   # Read ads and insights
+    "business_management",        # Access Business Manager assets and roles
+
+    # Instagram
+    "instagram_basic",            # Read Instagram account profile info
+    "instagram_content_publish"   # Publish content to Instagram business accounts
+]
+
+# String version to pass to OAuth URLs
+OAUTH_SCOPES_STR = ",".join(OAUTH_SCOPES)
+
+@app.route('/api/oauth/facebook/callback', methods=['GET'])
+@app.route('/api/oauth/instagram/callback', methods=['GET'])
+def oauth_facebook_callback():
+    code = request.args.get('code')
+    state = request.args.get('state') or ''
+    error = request.args.get('error')
+    frontend = FRONTEND_BASE_URL.rstrip('/')
+
+    # Helper to render response
+    def render_response(payload):
+        payload_json = json.dumps(payload)
+        return render_template_string("""
+<!doctype html><html><head><meta charset="utf-8"/></head><body>
+<script>
+(function(){
+  var payload = {{payload|safe}};
+  var targetOrigin = "{{frontend}}";
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(payload, targetOrigin);
+      window.close();
+    } else {
+      var frag = "data=" + encodeURIComponent(JSON.stringify(payload));
+      window.location.href = "{{frontend}}/oauth-complete#" + frag;
+    }
+  } catch(e) {
+    var frag = "data=" + encodeURIComponent(JSON.stringify(payload));
+    window.location.href = "{{frontend}}/oauth-complete#" + frag;
+  }
+})();
+</script>
+</body></html>
+        """, payload=payload_json, frontend=frontend)
+
+    # 1️⃣ Handle error / missing code
+    if error or not code:
+        payload = {"type": "sociovia_oauth_complete", "success": False, "state": state,
+                   "fb_error": {"message": error or "no_code"}}
+        return render_response(payload)
+
+    # 2️⃣ Exchange code → short-lived token
+    token_url = f"https://graph.facebook.com/{FB_API_VERSION}/oauth/access_token"
+    params = {
+        'client_id': FB_APP_ID,
+        'client_secret': FB_APP_SECRET,
+        'redirect_uri': f"{OAUTH_REDIRECT_BASE.rstrip('/')}/api/oauth/facebook/callback",
+        'code': code
+    }
+    try:
+        r = requests.get(token_url, params=params, timeout=10)
+        data = r.json()
+        if 'error' in data:
+            raise ValueError(data['error'])
+        short_token = data.get('access_token')
+    except Exception as exc:
+        payload = {"type": "sociovia_oauth_complete", "success": False, "state": state,
+                   "fb_error": {"message": "token_exchange_failed", "details": str(exc)}}
+        return render_response(payload)
+
+    # 3️⃣ Exchange short-lived → long-lived token
+    exch_url = f"https://graph.facebook.com/{FB_API_VERSION}/oauth/access_token"
+    exch_params = {
+        'grant_type': 'fb_exchange_token',
+        'client_id': FB_APP_ID,
+        'client_secret': FB_APP_SECRET,
+        'fb_exchange_token': short_token
+    }
+    try:
+        r2 = requests.get(exch_url, params=exch_params, timeout=10)
+        long_token = r2.json().get('access_token', short_token)
+    except Exception:
+        long_token = short_token  # fallback
+
+    # 4️⃣ Fetch pages + IG business accounts
+    try:
+        pages_url = f"https://graph.facebook.com/{FB_API_VERSION}/me/accounts"
+        pages_r = requests.get(pages_url, params={
+            'access_token': long_token,
+            'fields': 'id,name,access_token,instagram_business_account'
+        }, timeout=10)
+        pages = pages_r.json().get('data', [])
+    except Exception as exc:
+        payload = {"type": "sociovia_oauth_complete", "success": False, "state": state,
+                   "fb_error": {"message": "fetch_pages_failed", "details": str(exc)}}
+        return render_response(payload)
+
+    # 5️⃣ Save/update social accounts
+    saved = []
+    db_error = None
+    try:
+        user = get_user_from_request(require=False)
+        user_id = getattr(user, "id", None)
+        for p in pages:
+            page_id = str(p.get('id'))
+            page_name = p.get('name')
+            page_token = p.get('access_token') or long_token
+            ig = p.get('instagram_business_account')
+            ig_id = str(ig.get('id')) if ig else None
+
+            try:
+                existing = SocialAccount.query.filter_by(provider='facebook', provider_user_id=page_id).first()
+                if not existing:
+                    sa = SocialAccount(
+                        provider='facebook',
+                        provider_user_id=page_id,
+                        account_name=page_name,
+                        access_token=page_token,
+                        user_id=user_id,
+                        scopes=OAUTH_SCOPES,
+                        instagram_business_id=ig_id
+                    )
+                    db.session.add(sa)
+                    db.session.commit()
+                    saved.append(sa.serialize())
+                else:
+                    existing.access_token = page_token
+                    existing.scopes = OAUTH_SCOPES
+                    existing.instagram_business_id = ig_id
+                    if user_id:
+                        existing.user_id = user_id
+                    db.session.add(existing)
+                    db.session.commit()
+                    saved.append(existing.serialize())
+            except Exception as e:
+                db.session.rollback()
+                db_error = str(e)
+    except Exception as e:
+        db_error = str(e)
+
+    # 6️⃣ Respond to frontend
+    resp_payload = {
+        "type": "sociovia_oauth_complete",
+        "success": (len(saved) > 0 and db_error is None),
+        "state": state,
+        "saved": saved,
+        "fb_pages_count": len(pages)
+    }
+    if db_error:
+        resp_payload["db_error"] = db_error
+
+    return render_response(resp_payload)
+
+import jwt
+@app.route('/api/oauth/facebook/save-selection', methods=['POST'])
+@cross_origin(origins=["https://sociovia.com","https://6136l5dn-5000.inc1.devtunnels.ms"], supports_credentials=True)
+def oauth_save_selection():
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({'success': False, 'error': 'invalid_json'}), 400
+
+    # Use user_id from frontend if present
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'error': 'missing_user_id'}), 400
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'user_not_found'}), 404
+
+    accounts = data.get('accounts', [])
+    features = data.get('features', {})
+    saved = []
+
+    for a in accounts:
+        provider = a.get('provider') or 'facebook'
+        pid = str(a.get('provider_user_id'))
+        sa = SocialAccount.query.filter_by(provider=provider, provider_user_id=pid, user_id=user.id).first()
+        enabled_scopes = [k for k, v in (features or {}).items() if v]
+
+        if sa:
+            sa.scopes = ",".join(enabled_scopes) if enabled_scopes else sa.scopes
+        else:
+            sa = SocialAccount(
+                user_id=user.id,
+                provider=provider,
+                provider_user_id=pid,
+                account_name=a.get('name', ''),
+                scopes=",".join(enabled_scopes)
+            )
+            db.session.add(sa)
+        saved.append(sa.serialize())
+
+    db.session.commit()
+    return jsonify({'success': True, 'connected': saved}), 200
+
+
+
+@app.route('/api/oauth/facebook/revoke', methods=['POST'])
+@app.route('/api/oauth/instagram/revoke', methods=['POST'])
+def oauth_revoke():
+    data = request.get_json(force=True, silent=True) or {}
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'error': 'missing_user_id'}), 400
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'user_not_found'}), 404
+
+    provider = data.get('provider')
+    provider_user_id = str(data.get('provider_user_id'))
+    sa = SocialAccount.query.filter_by(
+        provider=provider,
+        provider_user_id=provider_user_id,
+        user_id=user.id
+    ).first()
+
+    if not sa:
+        return jsonify({'success': False, 'error': 'not_found'}), 404
+
+    try:
+        if sa.access_token:
+            revoke_url = f"https://graph.facebook.com/{FB_API_VERSION}/me/permissions"
+            requests.delete(revoke_url, params={'access_token': sa.access_token}, timeout=5)
+    except Exception:
+        logger.exception('Failed to call fb revoke')
+
+    db.session.delete(sa)
+    db.session.commit()
+    return jsonify({'success': True}), 200
+
+# Deauthorize & Data Deletion endpoints (hook into FB App settings)
+@app.route('/api/oauth/deauthorize', methods=['POST'])
+def fb_deauthorize():
+    # FB sends a signed_request form param on deauth — you must verify it with your app secret.
+    # For now accept and mark accounts disconnected (dev skeleton).
+    payload = request.form or request.json or {}
+    logger.info("FB deauthorize payload: %s", payload)
+    # TODO: validate signed_request here
+    # Example behavior: find user by facebook id in payload and remove tokens
+    return jsonify({'success': True}), 200
+
+@app.route('/api/data-deletion', methods=['POST'])
+def fb_data_deletion():
+    # Data deletion flow: FB will POST a request. You should start deletion and return a JSON with a status URL.
+    body = request.get_json() or {}
+    logger.info("FB data deletion request: %s", body)
+    # TODO: implement actual deletion and return a reachable status/url per FB spec
+    status_url = f"{APP_BASE_URL.rstrip('/')}/data-deletion-status?request_id={int(datetime.utcnow().timestamp())}"
+    return jsonify({"url": status_url}), 200
+
+# ---------------- Facebook Meta endpoints (ads, campaigns, insights) ----------------
+def get_facebook_token_for_user(user_id):
+    if not user_id:
+        return None
+    sa = SocialAccount.query.filter_by(provider="facebook", user_id=user_id).first()
+    if not sa:
+        return None
+    # prefer the stored access_token
+    token = getattr(sa, "access_token", None)
+    return token
+
+import os
+import json
+import asyncio
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+from dotenv import load_dotenv  
+
+BASE_DIR = Path(__file__).resolve().parent
+STORAGE_FILE =BASE_DIR = Path(__file__).resolve().parent/ "tokens.json" 
+    # ----- Storage helpers (file-backed demo) -----
+async def read_storage() -> Dict[str, Any]:
+    if not STORAGE_FILE.exists():
+        await asyncio.to_thread(STORAGE_FILE.write_text, json.dumps({"pages": {}, "workspace_map": {}}))
+    raw = await asyncio.to_thread(STORAGE_FILE.read_text)
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"pages": {}, "workspace_map": {}}
+
+async def write_storage(payload: Dict[str, Any]):
+    await asyncio.to_thread(STORAGE_FILE.write_text, json.dumps(payload, indent=2))
+
+# ----- WebSocket connection manager (simple broadcast) -----
+class ConnectionManager:
+    def __init__(self):
+        self.connections: List[WebSocket] = []
+        self.lock = asyncio.Lock()
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        async with self.lock:
+            self.connections.append(ws)
+
+    async def disconnect(self, ws: WebSocket):
+        async with self.lock:
+            if ws in self.connections:
+                self.connections.remove(ws)
+
+    async def broadcast(self, message: Dict[str, Any]):
+        text = json.dumps(message)
+        async with self.lock:
+            to_remove: List[WebSocket] = []
+            for ws in list(self.connections):
+                try:
+                    await ws.send_text(text)
+                except Exception:
+                    to_remove.append(ws)
+            for ws in to_remove:
+                if ws in self.connections:
+                    self.connections.remove(ws)
+
+manager = ConnectionManager()
+
+# ----- HTTP helper for Facebook Graph calls -----
+async def fb_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    url = f"https://graph.facebook.com/v17.0/{path}"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.get(url, params=params)
+        try:
+            return r.json()
+        except Exception:
+            raise HTTPException(status_code=502, detail="Invalid response from Facebook")
+
+async def fb_post(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    url = f"https://graph.facebook.com/v17.0/{path}"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.post(url, data=params)
+        try:
+            return r.json()
+        except Exception:
+            raise HTTPException(status_code=502, detail="Invalid response from Facebook")
+
+# ----- Parse Insights -> WorkspaceMetrics (best-effort) -----
+def parse_facebook_insights_to_metrics(page_id: str, insights_response: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert Graph API insights response into a metrics dict frontend expects.
+    The Graph API returns `data` array where each item has `name`, `period`, `values`.
+    We try to extract: impressions, clicks (if available), reach, ctr, cpm estimate, leads (not usually on page insights).
+    This function returns a dict containing keys: workspace_id (placeholder), page_id, impressions, clicks, reach, ctr, cpm, total_spend (unknown), leads (unknown), last_updated
+    Adjust mapping per your Graph API calls (ads insights vs page insights differ).
+    """
+    metrics: Dict[str, Any] = {
+        "workspace_id": None,
+        "page_id": page_id,
+        "impressions": 0,
+        "clicks": 0,
+        "reach": 0,
+        "ctr": 0.0,
+        "cpm": 0.0,
+        "total_spend": 0.0,
+        "leads": 0,
+        "active_campaigns": 0,
+        "last_updated": int(asyncio.get_event_loop().time()) if asyncio.get_event_loop().is_running() else 0,
+        "insights_raw": insights_response,
+    }
+
+    data = insights_response.get("data") or []
+    # Common names: page_impressions, page_impressions_unique, page_engaged_users, page_fans, etc.
+    for item in data:
+        name = item.get("name")
+        values = item.get("values") or []
+        # try last value numeric
+        last_value = None
+        if values:
+            last = values[-1]
+            # `value` could be number or dict
+            last_value = last.get("value") if isinstance(last, dict) else last
+
+        if name in ("page_impressions", "page_impressions_unique"):
+            try:
+                metrics["impressions"] = int(last_value or 0)
+            except Exception:
+                pass
+        elif name in ("page_engaged_users",):
+            try:
+                metrics["reach"] = int(last_value or 0)
+            except Exception:
+                pass
+        elif name in ("page_fan_adds", "page_fan_removes"):
+            # ignore for now
+            pass
+        # Add other mapping rules as needed
+
+    # Ads-level metrics (if you call /act_{ad_account}/insights) would include 'impressions', 'clicks', 'spend', 'ctr', 'cpm'
+    # Check if insights_response already has totals in a different shape (some endpoints return a single object with fields)
+    # Try to extract ads-like fields if present:
+    if isinstance(insights_response, dict):
+        # sometimes metrics are top-level keys
+        for k in ("impressions", "clicks", "spend", "ctr", "cpm"):
+            if k in insights_response:
+                try:
+                    if k == "spend":
+                        metrics["total_spend"] = float(insights_response[k])
+                    elif k == "impressions":
+                        metrics["impressions"] = int(insights_response[k])
+                    elif k == "clicks":
+                        metrics["clicks"] = int(insights_response[k])
+                    elif k == "ctr":
+                        metrics["ctr"] = float(insights_response[k])
+                    elif k == "cpm":
+                        metrics["cpm"] = float(insights_response[k])
+                except Exception:
+                    pass
+
+    # heuristics: compute ctr if impressions and clicks available
+    try:
+        imps = metrics.get("impressions", 0)
+        clicks = metrics.get("clicks", 0)
+        if imps and clicks:
+            metrics["ctr"] = round((clicks / imps) * 100, 2)
+    except Exception:
+        metrics["ctr"] = 0.0
+
+    # attempt approximate CPM if we have spend and impressions
+    try:
+        if metrics.get("impressions") and metrics.get("total_spend"):
+            metrics["cpm"] = round((metrics["total_spend"] / (metrics["impressions"] / 1000 or 1)), 2)
+    except Exception:
+        metrics["cpm"] = 0.0
+
+    # active_campaigns & leads require Ads API / conversion tracking; leave defaults
+    return metrics
+
+# ----- ROUTES -----
+
+    @app.get("/api/health")
+    async def health():
+        return {"status": "ok"}
+
+    @app.get("/api/facebook/pages")
+    async def list_pages():
+        """
+        Return pages we have stored (linked) with their metadata.
+        """
+        store = await read_storage()
+        pages = list(store.get("pages", {}).values())
+        return JSONResponse({"success": True, "pages": pages})
+
+    @app.post("/api/facebook/unlink")
+    async def unlink_page(req: Request):
+        """
+        Body: { pageId: '12345' }
+        Removes stored page token and associated workspace mapping.
+        """
+        body = await req.json()
+        page_id = str(body.get("pageId") or "")
+        if not page_id:
+            raise HTTPException(400, "pageId required")
+
+        store = await read_storage()
+        pages = store.get("pages", {})
+        if page_id in pages:
+            pages.pop(page_id, None)
+            # remove mappings to workspace
+            wsmap = store.get("workspace_map", {})
+            to_delete = [k for k, v in wsmap.items() if str(v) == page_id]
+            for k in to_delete:
+                wsmap.pop(k, None)
+            store["workspace_map"] = wsmap
+            store["pages"] = pages
+            await write_storage(store)
+            # broadcast unlink event
+            await manager.broadcast({"type": "page_unlinked", "payload": {"pageId": page_id}})
+            return {"success": True, "message": "Page unlinked"}
+        return {"success": False, "message": "Page not found"}
+
+    @app.post("/api/facebook/switch")
+    async def switch_account(req: Request):
+        """
+        Body: { workspaceId: 123, pageId: '67890' }
+        Map workspace -> pageId so future refreshes attribute metrics to workspace.
+        """
+        body = await req.json()
+        workspace_id = body.get("workspaceId")
+        page_id = str(body.get("pageId") or "")
+        if not workspace_id or not page_id:
+            raise HTTPException(400, "workspaceId and pageId required")
+
+        store = await read_storage()
+        store.setdefault("workspace_map", {})[str(workspace_id)] = page_id
+        await write_storage(store)
+        await manager.broadcast({"type": "page_switched", "payload": {"workspaceId": workspace_id, "pageId": page_id}})
+        return {"success": True}
+
+    @app.post("/api/facebook/refresh")
+    async def refresh_insights(req: Request):
+        """
+        Trigger server to fetch latest insights for a given page or all pages.
+        Body: { pageId?: '123' }
+        The server will fetch Graph API insights and broadcast messages to WS clients:
+        - message type: 'metrics_update' with payload equal to parsed metrics (see parse_facebook_insights_to_metrics).
+        """
+        body = await req.json()
+        page_id = body.get("pageId")
+
+        store = await read_storage()
+        pages = store.get("pages", {})
+        targets: List[str] = [page_id] if page_id else list(pages.keys())
+        if not targets:
+            return {"success": False, "message": "No pages linked to refresh"}
+
+        async def fetch_and_broadcast(pid: str):
+            page = pages.get(pid)
+            token = page.get("access_token") if page else None
+            if not token:
+                return False
+            # Choose which insights to request. Adjust metrics list to your needs.
+            metric = "page_impressions,page_engaged_users"
+            params = {"access_token": token, "metric": metric, "period": "days_7"}
+            try:
+                data = await fb_get(f"{pid}/insights", params)
+                metrics = parse_facebook_insights_to_metrics(pid, data)
+                # attach workspace_id if mapped
+                workspace_map = store.get("workspace_map", {})
+                mapped_ws = None
+                for wsid, p in (workspace_map.items() if isinstance(workspace_map, dict) else []):
+                    if str(p) == str(pid):
+                        mapped_ws = int(wsid) if str(wsid).isdigit() else wsid
+                        break
+                metrics["workspace_id"] = mapped_ws or metrics.get("workspace_id")
+                # broadcast
+                await manager.broadcast({"type": "metrics_update", "payload": metrics})
+                return True
+            except Exception as e:
+                print("refresh error for", pid, e)
+                return False
+
+        results = await asyncio.gather(*(fetch_and_broadcast(pid) for pid in targets))
+        ok = all(results)
+        return {"success": ok}
+
+    @app.post("/api/facebook/exchange_code")
+    async def exchange_code(req: Request):
+        """
+        Exchanges an OAuth code for a user access token and fetches pages & page access tokens.
+        Body: { code: string, redirect_uri: string }
+        Returns: pages list with page access tokens (and stores them).
+        IMPORTANT: In production you must validate state and associate tokens with the authenticated user (not shown here).
+        """
+        body = await req.json()
+        code = body.get("code")
+        redirect_uri = body.get("redirect_uri")
+        if not code or not redirect_uri:
+            raise HTTPException(400, "code and redirect_uri required")
+
+        # Step 1: exchange code -> user access token
+        exchange_params = {
+            "client_id": FB_APP_ID,
+            "redirect_uri": redirect_uri,
+            "client_secret": FB_APP_SECRET,
+            "code": code,
+        }
+        token_resp = await fb_get("oauth/access_token", exchange_params)
+        user_token = token_resp.get("access_token")
+        if not user_token:
+            raise HTTPException(status_code=400, detail={"message": "Failed to exchange code", "details": token_resp})
+
+        # Step 2: get pages (with page access tokens)
+        # Request /me/accounts with user access token
+        pages_resp = await fb_get("me/accounts", {"access_token": user_token})
+        pages_data = pages_resp.get("data", [])
+        stored = await read_storage()
+        pages_store = stored.get("pages", {})
+        for p in pages_data:
+            pid = str(p.get("id"))
+            # Graph returns `access_token` for page if user has sufficient permissions
+            page_token = p.get("access_token")
+            pages_store[pid] = {
+                "id": pid,
+                "name": p.get("name"),
+                "category": p.get("category"),
+                "access_token": page_token,
+                # extra fields
+            }
+        stored["pages"] = pages_store
+        await write_storage(stored)
+
+        # return the pages list
+        return {"success": True, "pages": list(pages_store.values()), "user_token": bool(user_token)}
+
+    # ----- WebSocket endpoint -----
+    @app.websocket("/ws/metrics")
+    async def websocket_metrics(ws: WebSocket):
+        """
+        WebSocket for broadcasting metric updates.
+        Message format:
+        { type: 'metrics_update', payload: { workspace_id, page_id, impressions, clicks, ctr, cpm, total_spend, last_updated, insights_raw } }
+        Clients can simply listen and merge payload into their metricsMap.
+        """
+        await manager.connect(ws)
+        try:
+            while True:
+                # optionally, the client may send messages to subscribe; we currently ignore client messages
+                try:
+                    msg = await ws.receive_text()
+                    # ignore; optionally parse subscription messages here
+                except Exception:
+                    # idle loop to keep alive; allow server to send broadcasts
+                    await asyncio.sleep(0.1)
+        except WebSocketDisconnect:
+            await manager.disconnect(ws)
+        except Exception:
+            await manager.disconnect(ws)
+            
+
+from flask import jsonify, request
+import requests
+import json
+from typing import Optional
+
+# --- Helper: call Graph API with a token (safe wrapper) ---
+def _graph_get(path: str, token: str, params: dict = None, timeout: int = 10):
+    """
+    GET to Graph API path (path may be like 'me' or '12345' or '12345/insights').
+    Returns tuple (ok: bool, status_code: int, json_or_text)
+    """
+    params = params.copy() if params else {}
+    params["access_token"] = token
+    url = f"https://graph.facebook.com/{FB_API_VERSION}/{path}"
+    try:
+        resp = requests.get(url, params=params, timeout=timeout)
+        # try parse json but return raw text if parse fails
+        try:
+            body = resp.json()
+        except Exception:
+            body = resp.text
+        return (resp.status_code == 200, resp.status_code, body)
+    except Exception as exc:
+        logger.exception("Graph GET failed for %s: %s", path, exc)
+        return (False, 500, {"error": "exception", "details": str(exc)})
+
+# --- 1) /api/social/accounts/db  (list DB accounts; alias for your existing route) ---
+@app.route("/api/social/accounts/db", methods=["GET", "OPTIONS"])
+def api_social_accounts_db():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+    user = get_user_from_request(require=False)
+    if user:
+        accounts = SocialAccount.query.filter((SocialAccount.user_id == None) | (SocialAccount.user_id == user.id)).all()
+    else:
+        accounts = SocialAccount.query.filter_by(user_id=None).all()
+    return jsonify({"success": True, "accounts": [a.serialize() for a in accounts]}), 200
+
+# --- 2) /api/social/accounts/raw  (fetch current DB accounts + try to refresh Graph data for each) ---
+@app.route("/api/social/accounts/raw", methods=["GET"])
+def api_social_accounts_raw():
+    """
+    Returns an array of objects: { db: <serialized DB row>, fb_raw: <graph response or null>, error: <optional> }
+    This helps the frontend show both DB state and the latest data from FB for each connected page.
+    """
+    user = get_user_from_request(require=False)
+    accounts = SocialAccount.query.all()
+    result = []
+    for a in accounts:
+        entry = {"db": a.serialize(), "fb_raw": None, "error": None}
+        token = a.access_token or (get_facebook_token_for_user(user.id) if user else None)
+        if token:
+            ok, status, body = _graph_get(f"{a.provider_user_id}", token, params={"fields":"id,name,link,fan_count,category,instagram_business_account"})
+            if ok:
+                entry["fb_raw"] = body
+            else:
+                entry["error"] = {"status": status, "body": body}
+        else:
+            entry["error"] = {"message":"no_token_available"}
+        result.append(entry)
+    return jsonify({"success": True, "rows": result}), 200
+
+# --- 3) /api/facebook/page-details?page_id=...&fields=...  (fetch FB page details/insights for a page) ---
+@app.route("/api/facebook/page-details", methods=["GET"])
+def api_facebook_page_details():
+    """
+    Query params:
+      - page_id (required)
+      - fields (optional, comma separated) default: id,name,link,fan_count,category,insights.metric(page_impressions,page_engaged_users).period(days_7)
+      - since / until (optional) for insights time_range
+    """
+    page_id = request.args.get("page_id")
+    if not page_id:
+        return jsonify({"success": False, "error": "missing_page_id"}), 400
+
+    # Try to find a DB SocialAccount for this page
+    sa = SocialAccount.query.filter_by(provider="facebook", provider_user_id=str(page_id)).first()
+    token = None
+    if sa and sa.access_token:
+        token = sa.access_token
+    else:
+        # fallback: current user's token
+        user = get_user_from_request(require=False)
+        if user:
+            token = get_facebook_token_for_user(user.id)
+
+    if not token:
+        return jsonify({"success": False, "error": "no_token_available"}), 403
+
+    # fields default
+    fields = request.args.get("fields") or "id,name,link,fan_count,category,instagram_business_account"
+    extra_params = {}
+    # support insights query if user requested insights via fields param using Graph shorthand (frontend can pass)
+    # but to make it easier: accept `insights=true` and since/until for insights
+    if request.args.get("insights") == "true":
+        since = request.args.get("since")
+        until = request.args.get("until")
+        if since and until:
+            extra_params["time_range"] = json.dumps({"since": since, "until": until})
+        # get some common metrics if not explicitly provided
+        fields = fields + ",insights.metric(page_impressions,page_engaged_users,page_fans).period(days_7)"
+
+    ok, status, body = _graph_get(f"{page_id}", token, params={"fields": fields, **extra_params}, timeout=20)
+    if not ok:
+        return jsonify({"success": False, "error": "fb_error", "details": body}), status
+    return jsonify({"success": True, "page": body}), 200
+ 
+# Add / paste into your Flask app file (below other imports & existing helpers)
+from flask import request, jsonify
+import json
+import requests
+from datetime import datetime
+
+# ensure _graph_get exists (if not, add this helper)
+def _graph_get(path: str, token: str, params: dict = None, timeout: int = 10):
+    params = params.copy() if params else {}
+    params["access_token"] = token
+    url = f"https://graph.facebook.com/{FB_API_VERSION}/{path}"
+    try:
+        resp = requests.get(url, params=params, timeout=timeout)
+        try:
+            body = resp.json()
+        except Exception:
+            body = resp.text
+        return (resp.status_code == 200, resp.status_code, body)
+    except Exception as exc:
+        logger.exception("Graph GET failed for %s: %s", path, exc)
+        return (False, 500, {"error": "exception", "details": str(exc)})
+
+# --- 1) Full social management endpoint (list accounts + optionally live fb data) ---
+@app.route("/api/social/management", methods=["GET", "OPTIONS"])
+def api_social_management():
+    # your existing implementation, for example:
+    DEFAULT_USER_ID = 1
+    user = get_user_from_request(require=True)
+    print(user,flush=True)
+    accounts = SocialAccount.query.order_by(SocialAccount.id.desc()).all()
+    rows = []
+    active = None
+
+    for a in accounts:
+        item = {"db": a.serialize(), "fb_raw": None, "error": None}
+
+        # Fallback token: account token first, else default user token
+        token = a.access_token or get_facebook_token_for_user(getattr(user, "id", DEFAULT_USER_ID))
+
+        if token:
+            ok, status, body = _graph_get(
+                f"{a.provider_user_id}",
+                token,
+                params={"fields": "id,name,link,fan_count,category,picture.width(200).height(200),instagram_business_account"},
+            )
+            if ok:
+                item["fb_raw"] = body
+            else:
+                item["error"] = {"status": status, "body": body}
+        else:
+            item["error"] = {"message": "no_token_available"}
+
+        rows.append(item)
+
+        # If you want to default active to first account when no user, set:
+        try:
+            if getattr(user, "active_social_account_id", None) == a.id:
+                active = a.serialize()
+        except Exception:
+            pass
+
+    # If no active and there are accounts, set first as active (optional)
+    if active is None and rows:
+        active = rows[0]["db"]
+
+    return jsonify({"success": True, "accounts": rows, "active_account": active}), 200
+
+
+from flask import g, session, request, jsonify
+
+@app.before_request
+def load_user():
+    user_id = session.get("user_id")
+    if user_id:
+        g.user = User.query.get(user_id)
+    else:
+        g.user = None
+
+# --- 2) Update permissions / scopes for a social account ---
+
+# Fix permissions endpoint to always save under user 1
+@app.route("/api/social/permissions", methods=["POST"])
+def api_social_permissions():
+    """Update social account permissions (always under user ID 1)"""
+    user_id = 1  # fixed user
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"success": False, "error": "invalid_request"}), 400
+
+    provider = data.get("provider")
+    provider_user_id = str(data.get("provider_user_id") or "")
+    scopes = data.get("scopes", [])
+
+    if not provider or not provider_user_id:
+        return jsonify({"success": False, "error": "missing_required_fields"}), 400
+
+    account = SocialAccount.query.filter_by(
+        provider=provider,
+        provider_user_id=provider_user_id
+    ).first()
+
+    if not account:
+        return jsonify({"success": False, "error": "account_not_found"}), 404
+
+    try:
+        account.scopes = ",".join(scopes)
+        account.user_id = user_id  # always set user to 1
+        db.session.add(account)
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "account": account.serialize()
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            "success": False,
+            "error": "db_error",
+            "message": str(e)
+        }), 500
+
+# Fix unlink endpoint
+@app.route("/api/social/unlink", methods=["POST"]) 
+def api_social_unlink():
+    """Unlink social account"""
+    user = get_user_from_request(require=True)
+    if not user:
+        return jsonify({"success": False, "error": "unauthorized"}), 401
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"success": False, "error": "invalid_request"}), 400
+
+    provider = data.get("provider")
+    provider_user_id = str(data.get("provider_user_id") or "")
+
+    if not provider or not provider_user_id:
+        return jsonify({"success": False, "error": "missing_required_fields"}), 400
+
+    account = SocialAccount.query.filter_by(
+        provider=provider,
+        provider_user_id=provider_user_id,
+        user_id=user.id
+    ).first()
+
+    if not account:
+        return jsonify({"success": False, "error": "account_not_found"}), 404
+
+    try:
+        # Try to revoke at Facebook if we have token
+        if account.access_token:
+            try:
+                revoke_url = f"https://graph.facebook.com/{FB_API_VERSION}/me/permissions"
+                requests.delete(
+                    revoke_url,
+                    params={"access_token": account.access_token},
+                    timeout=10
+                )
+            except Exception as e:
+                logger.warning(f"Failed to revoke FB token: {e}")
+
+        db.session.delete(account)
+        db.session.commit()
+
+        return jsonify({"success": True})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            "success": False,
+            "error": "db_error", 
+            "message": str(e)
+        }), 500
+       
+        # --- 5) Current active profile summary for UI (picture/name/fan_count etc) ---
+@app.route("/api/social/active-profile", methods=["GET"])
+def api_social_active_profile():
+    user = get_user_from_request(require=True)
+    active_id = getattr(user, "active_social_account_id", None)
+    if not active_id:
+        return jsonify({"success": False, "error": "no_active_account"}), 404
+    sa = SocialAccount.query.get(active_id)
+    if not sa:
+        return jsonify({"success": False, "error": "active_account_not_found"}), 404
+    token = sa.access_token or get_facebook_token_for_user(user.id)
+    if not token:
+        return jsonify({"success": False, "error": "no_token_available"}), 403
+    ok, status, body = _graph_get(f"{sa.provider_user_id}", token, params={"fields":"id,name,link,fan_count,picture.width(200).height(200),category,instagram_business_account"})
+    if not ok:
+        return jsonify({"success": False, "error": "fb_error", "details": body}), status
+    return jsonify({"success": True, "profile": body, "db": sa.serialize()}), 200
+
+
+# --- facebook_insights_routes.py ---
+import requests
+import json
+from datetime import datetime, timedelta
+from flask import request, jsonify
+
+# Helpers: _graph_get
+def _graph_get(path_or_node: str, access_token: str, params: dict = None, timeout: int = 10):
+    """
+    Simple helper to call the Facebook Graph API GET endpoint.
+    path_or_node: "12345" or "12345/posts" etc.
+    access_token: token string
+    returns: (ok: bool, status_code: int, body: dict or text)
+    """
+    params = params or {}
+    params["access_token"] = access_token
+    url = f"https://graph.facebook.com/{FB_API_VERSION}/{path_or_node.lstrip('/')}"
+    try:
+        r = requests.get(url, params=params, timeout=timeout)
+        try:
+            body = r.json()
+        except Exception:
+            body = r.text
+        ok = (r.status_code == 200)
+        return ok, r.status_code, body
+    except Exception as exc:
+        logger.exception("_graph_get exception for %s: %s", path_or_node, exc)
+        return False, 0, {"error": "request_exception", "details": str(exc)}
+
+# Helper: attempt to find a SocialAccount for user 1 (or find first)
+def _choose_account_for_default_user(default_uid=1, provider="facebook", provider_user_id: str = None):
+    """
+    If provider_user_id provided, look that up first.
+    Otherwise prefer accounts for user_id == default_uid, else first account.
+    Returns (SocialAccount instance or None)
+    """
+    if provider_user_id:
+        sa = SocialAccount.query.filter_by(provider=provider, provider_user_id=str(provider_user_id)).first()
+        if sa:
+            return sa
+    # try user default
+    sa = SocialAccount.query.filter_by(provider=provider, user_id=default_uid).order_by(SocialAccount.id.desc()).first()
+    if sa:
+        return sa
+    # fallback: any account
+    sa = SocialAccount.query.filter_by(provider=provider).order_by(SocialAccount.id.desc()).first()
+    return sa
+
+# Route: page details (used by FacebookManager.refreshRow)
+@app.route("/api/facebook/page-details2", methods=["GET"])
+def api_facebook_page_details2():
+    """
+    GET params:
+      page_id (provider_user_id) - optional; if not provided we try to pick user 1's account
+      insights (bool) - if true, also include basic insights (not used heavily)
+    Returns:
+      { success: true, page: {...} } or error
+    """
+    page_id = request.args.get("page_id") or request.args.get("provider_user_id")
+    include_insights = request.args.get("insights", "false").lower() in ("1", "true", "yes")
+
+    # Choose SocialAccount (prefer provided id > user 1 > first)
+    sa = _choose_account_for_default_user(default_uid=1, provider="facebook", provider_user_id=page_id)
+    if not sa:
+        return jsonify({"success": False, "error": "no_social_account_found"}), 404
+
+    token = sa.access_token or None
+    if not token:
+        # if you have a function to fetch app token, use it as a last resort
+        token = f"{FB_APP_ID}|{FB_APP_SECRET}"
+
+    # get page basic fields
+    ok, status, body = _graph_get(f"{sa.provider_user_id}", token, params={"fields": "id,name,link,fan_count,category,picture.width(200).height(200)"})
+    if not ok:
+        return jsonify({"success": False, "error": "graph_error", "status": status, "body": body}), status if status else 500
+
+    page_obj = body if isinstance(body, dict) else {"raw": body}
+
+    # optional: add a few lightweight insights (page impressions last 7 days)
+    if include_insights:
+        since = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        until = datetime.utcnow().strftime("%Y-%m-%d")
+        metrics = "page_impressions,page_engaged_users"
+        ok_i, s_i, b_i = _graph_get(f"{sa.provider_user_id}/insights", token, params={"metric": metrics, "since": since, "until": until})
+        if ok_i and isinstance(b_i, dict):
+            page_obj["insights"] = b_i.get("data", b_i)
+        else:
+            page_obj["insights_error"] = {"status": s_i, "body": b_i}
+
+    return jsonify({"success": True, "page": page_obj})
+
+# Route: insights (page metrics + posts summary) used by FacebookInsights.tsx
+@app.route("/api/facebook/insights2", methods=["GET"])
+def api_facebook_insights2():
+    """
+    Query params:
+      provider_user_id (page id) optional -> if missing, pick first account for user 1
+      limit (optional) number of posts to fetch (default 10)
+    Returns:
+      { success: true, page_insights: {...}, posts: [...] }
+    """
+    provider_user_id = request.args.get("provider_user_id")
+    limit = int(request.args.get("limit") or 10)
+
+    # pick account
+    sa = _choose_account_for_default_user(default_uid=1, provider="facebook", provider_user_id=provider_user_id)
+    if not sa:
+        return jsonify({"success": False, "error": "no_social_account_found"}), 404
+
+    token = sa.access_token or None
+    if not token:
+        token = f"{FB_APP_ID}|{FB_APP_SECRET}"  # fall back to app token (may have limited access)
+
+    page_id = sa.provider_user_id
+
+    # 1) Basic page fields
+    ok_page, status_page, page_body = _graph_get(f"{page_id}", token, params={"fields":"id,name,link,fan_count,category,picture.width(200).height(200)"})
+    if not ok_page:
+        return jsonify({"success": False, "error": "page_fetch_failed", "details": {"status": status_page, "body": page_body}}), status_page if status_page else 500
+
+    # 2) Fetch recent insights (last 30 days)
+    try:
+        since_date = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
+        until_date = datetime.utcnow().strftime("%Y-%m-%d")
+        # request some common page-level metrics
+        metrics = "page_impressions,page_engaged_users,page_consumptions,page_views_total"
+        ok_i, status_i, insights_body = _graph_get(f"{page_id}/insights", token, params={"metric": metrics, "since": since_date, "until": until_date})
+    except Exception as e:
+        ok_i, status_i, insights_body = False, 0, {"error": str(e)}
+
+    page_insights = {}
+    if ok_i and isinstance(insights_body, dict):
+        try:
+            # Graph returns data array where each element has 'name' and 'values'
+            for item in insights_body.get("data", []):
+                name = item.get("name")
+                values = item.get("values") or []
+                # pick last value numeric
+                if values:
+                    last_val = values[-1].get("value")
+                    page_insights[name] = last_val
+            # Normalize into the fields frontend expects
+            page_insights_normalized = {
+                "fan_count": page_body.get("fan_count"),
+                "talking_about_count": page_insights.get("page_engaged_users") or 0,
+                "page_views": page_insights.get("page_views_total") or 0,
+                "page_impressions": page_insights.get("page_impressions") or 0,
+                "engagement_rate": 0.0,
+            }
+            # compute engagement_rate if possible
+            try:
+                impressions = float(page_insights_normalized.get("page_impressions") or 0) or 1
+                engaged = float(page_insights_normalized.get("talking_about_count") or 0)
+                page_insights_normalized["engagement_rate"] = round((engaged / impressions) * 100, 2) if impressions else 0.0
+            except Exception:
+                page_insights_normalized["engagement_rate"] = 0.0
+        except Exception as exc:
+            logger.exception("Failed to normalize insights: %s", exc)
+            page_insights_normalized = {
+                "fan_count": page_body.get("fan_count"),
+                "talking_about_count": None,
+                "page_views": None,
+                "page_impressions": None,
+                "engagement_rate": None,
+            }
+    else:
+        # graph insights failed; return basic placeholders
+        page_insights_normalized = {
+            "fan_count": page_body.get("fan_count"),
+            "talking_about_count": None,
+            "page_views": None,
+            "page_impressions": None,
+            "engagement_rate": None,
+            "insights_error": {"status": status_i, "body": insights_body}
+        }
+
+    # 3) Fetch recent posts and simple metrics (likes/comments/shares)
+    posts_result = []
+    try:
+        # request posts with comment & reaction counts and shares
+        fields = "id,message,created_time,shares,comments.limit(0).summary(true),reactions.limit(0).summary(true)"
+        ok_p, status_p, posts_body = _graph_get(f"{page_id}/posts", token, params={"fields": fields, "limit": limit})
+        if ok_p and isinstance(posts_body, dict):
+            for p in posts_body.get("data", []):
+                pid = p.get("id")
+                message = p.get("message")
+                created_time = p.get("created_time")
+                shares = (p.get("shares") or {}).get("count", 0)
+                comments = (p.get("comments") or {}).get("summary", {}).get("total_count", 0)
+                reactions = (p.get("reactions") or {}).get("summary", {}).get("total_count", 0)
+                posts_result.append({
+                    "id": pid,
+                    "message": message,
+                    "created_time": created_time,
+                    "likes": reactions,
+                    "comments": comments,
+                    "shares": shares,
+                    "raw": p
+                })
+        else:
+            # try older "feed" endpoint fallback
+            posts_result = []
+    except Exception as exc:
+        logger.exception("Failed to fetch posts for %s: %s", page_id, exc)
+        posts_result = []
+
+    response = {
+        "success": True,
+        "page": page_body,
+        "page_insights": page_insights_normalized,
+        "posts": posts_result,
+    }
+    return jsonify(response)
+
 
 
 # ---------------- Run (dev) ----------------
 if __name__ == "__main__":
-    debug_flag = os.getenv("FLASK_ENV", "development") != "production"
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    with app.app_context():
+        db.create_all()
+        debug_flag = os.getenv("FLASK_ENV", "development") != "production"
+        app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
 
