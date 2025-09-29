@@ -48,7 +48,7 @@ class Config:
     SMTP_HOST = "smtp.gmail.com"
     SMTP_PORT = 587
     SMTP_USER = "noreply.sociovia@gmail.com"
-    SMTP_PASS = "sirr tpif vhku limb"  
+    SMTP_PASS = "hrgm qfdi ehky uyyz"  
     MAIL_FROM = "Sociovia <noreply.sociovia@gmail.com>"
 
     # Admin Configuration (hardcoded)
@@ -2635,6 +2635,7 @@ if __name__ == "__main__":
         db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
