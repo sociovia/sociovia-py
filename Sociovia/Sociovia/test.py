@@ -30,15 +30,20 @@ from Sociovia.Sociovia.utils import log_action, valid_password, generate_code, l
 
 
 from datetime import timedelta
-
+# config.py
+from datetime import timedelta
+import os
 class Config:
     # Security
     # NOTE: For quick local testing you can hardcode, but DO NOT commit this file to any repo.
     SECRET_KEY = "change_me_super_secret_production_key"
 
     # Database (hardcoded sqlite file)
-    SQLALCHEMY_DATABASE_URI = "sqlite:///sociovia.db"
+    SQLALCHEMY_DATABASE_URI = "postgresql://dbuser:StrongPasswordHere@34.10.193.3:5432/postgres"
+
+    
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_recycle": 300,
         "pool_pre_ping": True,
@@ -2635,6 +2640,7 @@ if __name__ == "__main__":
         db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
