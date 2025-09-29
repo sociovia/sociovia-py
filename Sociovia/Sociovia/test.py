@@ -25,7 +25,7 @@ from Sociovia.Sociovia.models import db, User, Admin,SocialAccount  # make sure 
 from Sociovia.Sociovia.mailer import send_mail
 from Sociovia.Sociovia.tokens import make_action_token, load_action_token
 from Sociovia.Sociovia.utils import log_action, valid_password, generate_code, load_email_template      
-from Sociovia.Socoiovia.config import Config
+from config import Config
 from Sociovia.models import db, User, Admin,SocialAccount  # make sure models.py exports User, Admin
 from Sociovia.mailer import send_mail
 from Sociovia.tokens import make_action_token, load_action_token
@@ -2603,5 +2603,6 @@ if __name__ == "__main__":
         db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
