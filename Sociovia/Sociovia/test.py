@@ -1651,7 +1651,7 @@ def oauth_facebook_callback():
 
     return render_response(resp_payload)
 
-import jwt
+
 @app.route('/api/oauth/facebook/save-selection', methods=['POST'])
 @cross_origin(origins=["https://sociovia.com","https://6136l5dn-5000.inc1.devtunnels.ms"], supports_credentials=True)
 def oauth_save_selection():
@@ -2635,6 +2635,7 @@ if __name__ == "__main__":
         db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
