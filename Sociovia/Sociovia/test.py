@@ -3750,13 +3750,40 @@ DOWNLOAD_TIMEOUT = int(os.environ.get("DOWNLOAD_TIMEOUT", 15))  # seconds for ex
 
 
 # --- Init GenAI client (Vertex mode) ---
+import os, json, tempfile
+from google import genai
+from google.genai.types import HttpOptions
+
 def init_client():
-    project = os.environ.get("GCP_PROJECT") or os.environ.get("PROJECT_ID") or "angular-sorter-473216-k8"
+    # Hardcoded credentials (paste your full JSON content below)
+    SERVICE_ACCOUNT_JSON = {
+  "type": "service_account",
+  "project_id": "angular-sorter-473216-k8",
+  "private_key_id": "8162683bcc131e691f316cfa3c801a5d2f7d2ac6",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCofJjdlfKPPcu7\nLyLXFphE8upuVNV4WtE34Pr4hXf5IFqR9jgM91lVeSMCxpUUC1WJlK8QOGyYvJn8\nNvv1vTNpUr+qTFiJ1GMW5MAnz07SuBzyT91LItUpUjWu+gp4hnZREudoGSOo1RsE\nBWqiP68CthekICQaTf+Kvr0JmttEi1UUihHAm79eB+Mq9i/G1Yqrlrwyh1d4MjVX\nz7Ys+2YPIc9+qF3SXBxe5fTKXHxkVrnxJDauF+RTJI0tVgxAXzxHyFUXzkwErZWT\nTfwJOUEVXsFZ3ped+bcATxumTYrunpPbDv+8kRKqoZhYwHrDA2JeWB6gYKKqa8yU\nQE6t6CHjAgMBAAECggEAHXBf2V/I2QRoI5Wx1bkp8+op0gtanUPpCIVz9JaFhu8D\nRDusQX+6iTe4SVTfWXg9guOKzx+8wdc6ZJpK3f4oDIAb4yqh0btdcPOZK5uKX0Ey\nNZiExwsYCbdGkAM6byK3a6UM7+BsnaRWqxYzMpREBQpCCThgdoQoYVrAdvwq0cfp\nme9g2Y6kmhueKYf1X15jadQAKjdhh6GdufBra/exhjpGpfpr1uM3dGeyEc+QX5jW\nIILyO+i1qzeL60+dbT1Q3Z2Ww9Jyup92d/LX2oOEuwU0qI2j7gYV1rgd7qi0EBWx\nH39a0bLiVEjfXsly2DyzgiAdc6Hcw246RqRO7tInKQKBgQDn6fTqMC8xf8/61u6Z\nTRbFb0jREvan79+q8D/y02tJ2r95wnsDlktE0OVuclZlpc1ge/2s5gz2clwiciao\nezKthe0ETh+fG4hKQ+jI11aXCuWvoThNNTQbhT9BU8mDXQpYGVQsTpuNjs5T2lqz\n0nZHDBnLz9305uAEudBAoPdVNQKBgQC5/ELd0A+YBfZxWHnOsaQPS+wLIeZ+gVgT\ntBVVNwUn5g1/BWoNriuSgUznsYYHYcxyQ+BBmMLALwv/FvHwSB6gnw92wv46g0lx\nJl1m8PotanL+26zJFipqCIhQv2uq6EJcU01c/E6hf0h9Cj07OIxOvoXIev3DQ46x\ni3Z7CKV1twKBgCtetU6WdDztihd+2mAQ6pFBnnx672W4ljuBcnQW1ZmaLvS2SgsB\nsFHOPxnIiB+6Qg4pIeeTnhj4igJnFpOrdm68/PYxJfi7TWGWEZJ9stPMVefiXoUR\nzgzXflzZLnZCkAypr/QZPz3Z1vwXeZ7nXPcsbCaRWRDTnFFF7ownjhmBAoGAObVD\nTi4T2JjpCexpBzBpdnGZUS74pQIfQSXchK9owyOHxoT4jjwfuvqx0SZtLvcyh7X1\n7ISo0RcIAuOsuGC4WCBinPgOCDvaWuiLjLhy+AqSme+xokdla7cwDNYIY2Rjyt/y\nHksPXt7usBWwQCLgrkJBop4/BQp+SSq73ZsmM+sCgYEAs4/2Ed3hZW0dsVxntNCb\nfi0ShGAiK6yHwKa8gio3+1bCvfZz23O2PQxPRjNTF5WnQST6yMR/72wNX7SvRzai\nz5RVEV9Dt9H09DMuLO3q8xtLyanBv3LM6P+/n+JMYF1+xo6HGzGqmEAL/EzjOORQ\nMM5pl3UI0wH26s+06b4p4tE=\n-----END PRIVATE KEY-----\n",
+  "client_email": "sql-sa@angular-sorter-473216-k8.iam.gserviceaccount.com",
+  "client_id": "105513727061092469003",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/sql-sa%40angular-sorter-473216-k8.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
+    project = SERVICE_ACCOUNT_JSON["project_id"]
     location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
-    adc_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+
+    # Write the ADC JSON to a temporary file
+    adc_path = os.path.join(tempfile.gettempdir(), "adc.json")
+    with open(adc_path, "w") as f:
+        json.dump(SERVICE_ACCOUNT_JSON, f)
+
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
+
     print("[env] GCP_PROJECT:", project)
     print("[env] LOCATION:", location)
-    print("[env] ADC PATH SET:", bool(adc_path))
+    print("[env] ADC PATH:", adc_path)
+    print("[env] ADC EXISTS:", os.path.exists(adc_path))
+
     try:
         client = genai.Client(
             http_options=HttpOptions(api_version="v1"),
@@ -5376,6 +5403,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
