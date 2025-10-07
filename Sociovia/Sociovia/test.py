@@ -635,8 +635,7 @@ class Workspace(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    owner = db.relationship("User", backref="workspaces2")
-
+    
 
 
 
@@ -5377,6 +5376,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
