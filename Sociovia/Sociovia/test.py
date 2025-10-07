@@ -609,7 +609,7 @@ UPLOAD_BASE = os.path.join(os.getcwd(), "uploads", "workspaces")  # e.g. ./uploa
 # Create uploads base directory if missing
 os.makedirs(UPLOAD_BASE, exist_ok=True)
 class Workspace(db.Model):
-    __tablename__ = "workspaces"
+    __tablename__ = "workspaces2"
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
@@ -5370,6 +5370,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
