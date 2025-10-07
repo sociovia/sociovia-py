@@ -3763,61 +3763,35 @@ from google.genai.types import HttpOptions
 
 # >>> IMPORTANT: paste the full JSON you downloaded from GCP here.
 # Make sure private_key *includes* the BEGIN/END lines and newline chars.
-SERVICE_ACCOUNT_JSON = {
-  "type": "service_account",
-  "project_id": "angular-sorter-473216-k8",
-  "private_key_id": "93d623875d3dcffa376930902a494ebba5041205",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCplIJ2AZXH4axD\nH68P+oXCgYSiOnR0aCARntu+foIBfjxmtkdjK3NoU/Ja76Gj0ZXas/MdFXrsy4uF\n7lsCyL0oCRX+PV905ysBVUUPH2k3nGFPmwYreIOH/XaZF59B8N8tGqjZ+H2jbbUI\ntuv60wYYrV9HQ2g2oWGG+E4aW3fISLZFT11ujof46jS0mAtmSrrpwoOzUQqBeExF\nSWQnSbiBrQAjENkdPlJVaktQMj5C/rw0ay7rtmpEMlyQ9PZ9SLftB+dfJ11cN0it\nrAQMHOx8iscCmI1gXN6SSYPfm8RljTea3kyBZu4G8+squuNk2T9NkZdQaldKAqmh\np9LoBY3pAgMBAAECggEAAMaO3TLPKFGiK9Fsh85tx7C3dlV9nF2wjdwT5bhm6FJX\nPOIHDA9SEQ9XO66+ZsUp4gzyJvcm74fTzMpFDMt1wAXgnZ/SvLJk+jXVYccTQF+c\n+1P6cH713Qyd+v/GaPMM1kQ5svuFuZZiHlbV1/kYnUrHtYf7pUpSK5+dndW+w8H9\neW4Zv7tpC8VIfa440DoT5TZsdINserIBaiawGSnLBWp3v6aBu5cvuFxX52QcLtFQ\nTG234W0Xsgn0MSzkL5XsIPN5psXRRWJOnw7odZvbt2ILq+7sUgASzsAHjkogATZG\nOfRKx3Nk/x4FxcuQ+0PRSy+kBxc/5qlbQasM9oQGIQKBgQDT8s/0HKFV8A6wc2qR\nmFl3sdlRqC9UG4J7azITypxGiiqgJJbK1eM7GDpR3+vyqCYd9Zu4JbVrrzRddJZe\npCDa/z88fvWa5Az5zKHnde1GOXhXOFlOs7n8uaJLZmx2deAOZb8m55ZflLbZgE5Z\nj8/FSBRZccup3iSY0QTGVQWRGQKBgQDM02T/ImQY5jN5LtjuNjqbJo68qoO4boN+\nTYNZ4jcAoJ6hp5K1lqM0qc90bzHy2I3KPDvgjTubL9+xtZltYRHm28KaApiie/EV\nIev9056ccqzCOTEmZkSsnoD0TeasO+AHfbMf15WsHT6oWMlknKDOWvMhfQWYyWEE\nn7GrXrNtUQKBgQCMPl3V1F/5Amhl32kDwABrUDZRbu0qRS24xryTFf0EPAZqgut4\necDq6GQmqvlwTk0yg8MvPVxnTb5jnHKnWwkWf9DzEbsoa4AehoYXJxQC5KI5bGLD\nze7iSF8Yb0STufmw7Shn8NOymS/IibrOTneXvdMhQEgYNZKXv67eIYIWeQKBgQCP\nRA2Qp218PQgj6zCw7h1wCDguntYjWql+3pjRdfki5zYNvDhR61ucqmoA9wXo5q/G\nlPsMxby7f3DnzC3U4+CxqWUkdExu2mJ2dZOrpyl6JHvSHk7SnRXL59IrD5IZRogc\ntT9lNlXqXUpGVlQHm8aej98fvWL8y16g7VJIm6TFAQKBgBI+vgVqfByuiIGPessQ\nffAD52t67bHVzjPqPixWEHxU69MgIM39EZ2QZx/4ktgVqis+WJ560zkM0aF1YSjl\n3Hn4YivWOpsJ3utRTufRF55r8D8f6TsnVZyYE4oBXcdh68EmSf0FITsI1fL4qH12\n8OmNN/3B3T5VJE6uVEyTl9gW\n-----END PRIVATE KEY-----\n",
-  "client_email": "sql-sa@angular-sorter-473216-k8.iam.gserviceaccount.com",
-  "client_id": "105513727061092469003",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/sql-sa%40angular-sorter-473216-k8.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}
-
-def _write_adc_and_set_env(sa_dict):
-    # write JSON to a temp file (atomic-ish)
-    fd, path = tempfile.mkstemp(prefix="gcp-sa-", suffix=".json")
-    os.close(fd)
-    with open(path, "w") as f:
-        json.dump(sa_dict, f, indent=2)
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
-    return path
-
-def _token_test(adc_path):
-    # quick check: try to create credentials and refresh token
-    try:
-        from google.oauth2 import service_account
-        from google.auth.transport.requests import Request
-        info = json.load(open(adc_path, "r"))
-        creds = service_account.Credentials.from_service_account_info(
-            info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        creds.refresh(Request())
-        print("[token-test] OK: access token length:", len(creds.token))
-        return True
-    except Exception as e:
-        print("[token-test] FAIL:", type(e).__name__, e)
-        return False
+import os
+import json
+import tempfile
+from google import genai
+from google.genai.types import HttpOptions
 
 def init_client():
-    project = SERVICE_ACCOUNT_JSON.get("project_id") or os.environ.get("GCP_PROJECT") or "angular-sorter-473216-k8"
+    # Get service account JSON from env variable
+    sa_json_str = os.environ.get("GCP_SA_JSON")
+    if not sa_json_str:
+        print("ERROR: GCP_SA_JSON secret not found!", file=sys.stderr)
+        return None
+
+    SERVICE_ACCOUNT_JSON = json.loads(sa_json_str)
+
+    project = SERVICE_ACCOUNT_JSON["project_id"]
     location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
 
-    # Write ADC file and set env
-    adc_path = _write_adc_and_set_env(SERVICE_ACCOUNT_JSON)
+    # Write ADC to a temp file
+    adc_path = os.path.join(tempfile.gettempdir(), "gcp-sa.json")
+    with open(adc_path, "w") as f:
+        json.dump(SERVICE_ACCOUNT_JSON, f)
+
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
 
     print("[env] GCP_PROJECT:", project)
     print("[env] LOCATION:", location)
     print("[env] ADC PATH:", adc_path)
     print("[env] ADC EXISTS:", os.path.exists(adc_path))
-
-    # Token test (fail fast if key is bad)
-    if not _token_test(adc_path):
-        print("ERROR: service account key is invalid or revoked. Aborting genai client init.", file=sys.stderr)
-        return None
 
     try:
         client = genai.Client(
@@ -3836,10 +3810,6 @@ GENAI_CLIENT = init_client()
 if not GENAI_CLIENT:
     print("Warning: GENAI_CLIENT not initialized. Ensure google-genai is installed and ADC is configured.", file=sys.stderr)
 
-
-GENAI_CLIENT = init_client()
-if not GENAI_CLIENT:
-    print("Warning: GENAI_CLIENT not initialized. Ensure google-genai is installed and ADC is configured.", file=sys.stderr)
 
 # --- Saved-index utilities (local for now) ---
 def _load_saved_index() -> Dict[str, Any]:
@@ -5443,6 +5413,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
