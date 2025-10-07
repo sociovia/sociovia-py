@@ -3768,25 +3768,20 @@ import json
 import tempfile
 from google import genai
 from google.genai.types import HttpOptions
+import os
+from google import genai
+from google.genai.types import HttpOptions
 
 def init_client():
-    # Get service account JSON from env variable
-    sa_json_str = os.environ.get("GCP_SA_JSON")
-    if not sa_json_str:
-        print("ERROR: GCP_SA_JSON secret not found!", file=sys.stderr)
+    adc_path = "/etc/secrets/gcp-sa.json"  # Use the Render-mounted secret file
+    if not os.path.exists(adc_path):
+        print("ERROR: ADC file not found at", adc_path)
         return None
 
-    SERVICE_ACCOUNT_JSON = json.loads(sa_json_str)
-
-    project = SERVICE_ACCOUNT_JSON["project_id"]
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
-
-    # Write ADC to a temp file
-    adc_path = os.path.join(tempfile.gettempdir(), "gcp-sa.json")
-    with open(adc_path, "w") as f:
-        json.dump(SERVICE_ACCOUNT_JSON, f)
-
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
+
+    project = os.environ.get("GCP_PROJECT", "angular-sorter-473216-k8")
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
     print("[env] GCP_PROJECT:", project)
     print("[env] LOCATION:", location)
@@ -3803,13 +3798,12 @@ def init_client():
         print("[startup] genai.Client initialized (Vertex mode).")
         return client
     except Exception as e:
-        print("[startup] genai.Client init FAILED:", e, file=sys.stderr)
+        print("[startup] genai.Client init FAILED:", e)
         return None
 
 GENAI_CLIENT = init_client()
 if not GENAI_CLIENT:
-    print("Warning: GENAI_CLIENT not initialized. Ensure google-genai is installed and ADC is configured.", file=sys.stderr)
-
+    print("Warning: GENAI_CLIENT not initialized. Ensure google-genai is installed and ADC is configured.")
 
 # --- Saved-index utilities (local for now) ---
 def _load_saved_index() -> Dict[str, Any]:
@@ -5413,6 +5407,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
