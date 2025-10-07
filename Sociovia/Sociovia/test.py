@@ -21,7 +21,7 @@ from mailer import send_mail
 from tokens import make_action_token, load_action_token
 from utils import log_action, valid_password, generate_code, load_email_template
 """
-from Sociovia.Sociovia.models import db, User, Admin,SocialAccount,Workspace # make sure models.py exports User, Admin
+from Sociovia.Sociovia.models import db, User, Admin,SocialAccount# make sure models.py exports User, Admin
 from Sociovia.Sociovia.mailer import send_mail
 from Sociovia.Sociovia.tokens import make_action_token, load_action_token
 from Sociovia.Sociovia.utils import log_action, valid_password, generate_code, load_email_template      
@@ -609,28 +609,33 @@ UPLOAD_BASE = os.path.join(os.getcwd(), "uploads", "workspaces")  # e.g. ./uploa
 # Create uploads base directory if missing
 os.makedirs(UPLOAD_BASE, exist_ok=True)
 class Workspace(db.Model):
-    __tablename__ = "workspaces"
+    __tablename__ = "workspaces2"
+    __table_args__ = {"extend_existing": True}   # temporary: allows redefinition during debugging
 
     id = db.Column(db.Integer, primary_key=True)
+    # important: reference 'users.id' if your User __tablename__ == 'users'
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    business_name = db.Column(db.String(255))
-    business_type = db.Column(db.String(100))
-    registered_address = db.Column(db.String(255))
-    b2b_b2c = db.Column(db.String(50))
-    industry = db.Column(db.String(100))
-    describe_business = db.Column(db.Text)
-    describe_audience = db.Column(db.Text)
-    website = db.Column(db.String(255))
-    direct_competitors = db.Column(db.Text)
-    indirect_competitors = db.Column(db.Text)
-    social_links = db.Column(db.Text)
-    usp = db.Column(db.String(255))
-    logo_path = db.Column(db.String(255))
-    creatives_paths = db.Column(db.Text)
-    additional_remarks = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=db.func.now())
-    updated_at = db.Column(db.DateTime, default=db.func.now(), onupdate=db.func.now())  # this is missing in DB
+    business_name = db.Column(db.String(255), nullable=True)
+    business_type = db.Column(db.String(100), nullable=True)
+    registered_address = db.Column(db.String(500), nullable=True)
+    b2b_b2c = db.Column(db.String(20), nullable=True)
+    industry = db.Column(db.String(255), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    audience_description = db.Column(db.Text, nullable=True)
+    website = db.Column(db.String(255), nullable=True)
+    competitor_direct_1 = db.Column(db.String(255), nullable=True)
+    competitor_direct_2 = db.Column(db.String(255), nullable=True)
+    competitor_indirect_1 = db.Column(db.String(255), nullable=True)
+    competitor_indirect_2 = db.Column(db.String(255), nullable=True)
+    social_links = db.Column(db.Text, nullable=True)  # JSON or CSV
+    usp = db.Column(db.Text, nullable=True)
+    logo_path = db.Column(db.String(500), nullable=True)
+    creatives_path = db.Column(db.String(500), nullable=True)
+    remarks = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    owner = db.relationship("User", backref="workspaces2")
 
 
 
@@ -5372,6 +5377,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
