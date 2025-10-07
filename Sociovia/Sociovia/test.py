@@ -1326,7 +1326,7 @@ def api_workspace_delete(workspace_id):
         return jsonify({"success": False, "error": "internal_server_error", "details": str(e)}), 500
     
 from flask import request, jsonify
-from app import db
+
 from models import Workspace
 import json
 from datetime import datetime
@@ -5372,6 +5372,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
