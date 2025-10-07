@@ -3771,16 +3771,41 @@ from google.genai.types import HttpOptions
 import os
 from google import genai
 from google.genai.types import HttpOptions
+import os
+import tempfile
+import json
+from google import genai
+from google.genai.types import HttpOptions
+from google.oauth2 import service_account
+from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
+
+# --------------------------
+# Hardcoded Service Account JSON
+# --------------------------
+SERVICE_ACCOUNT_JSON = {
+    "type": "service_account",
+    "project_id": "angular-sorter-473216-k8",
+    "private_key_id": "b1d244150b529c30623dfa5e48c9604e887cd78c",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDOtyakTSfOBG2y\n7Mk4SWCR8CrKEEK6Dz6zW1Gfwt6AXLACvbHuFRuW+nJ6gB/WJGP50mvwEU1xtohQ\n4qzcf45YQWfAYSTNu4tNv4RZR4w5DJcu0wK8nzL2RAS3/6h0Hu+F7fIRjVKfCKfa\n5MbFNVflnI8+cdUSSScTecNzRJaMVscuvzLG8ZUPVTIGxT/osb0yAL54swo0h0lM\nIUTP5sBV+7mwCQFaXtponhTxVUD3pVqZvq4XkAPx0wqRY1Gsv5RhP+Xa/ZzciqYZ\n42PBw0+aAIsWRn0rGyaXK6JfOaPPrA3I6PcZaIS4ktofac09mJ8+EybNZ/SWjwn0\nl5iy+J2RAgMBAAECggEAZgErwMzP9RHrXe0JWEyhKjKkssQ2YSDPtGq+CwN6j0Xt\nltSrngvtauGYJwnda+rWKLtkhvjKye+kMaHBYidRgwx3WY+2PQ0sLwfwE6xCLg6f\n9burcI9wcuRanb87DV4MnP6vQmkF2bNIPTRCP6NUhdntN4eteFH/xdUClPlF/uaZ\nifyVtQdY+BqdBOFCef6QDhq/OgKL8smI/oXXeNA0zrJI9xePJl+au2njSanDz0zT\nHvrxtdcdmBD65ZZ9kJOVMkZngU+/JkojPwzRw4BCiCdursuvYBgyfnGB1Q2h3VP3\ncC7oca50ZySWTtTmCz7khKAmoJiSm/3TnSJgJn+iNwKBgQD7CZ9JitD/xgjoW6Bt\nxOnycIGv/JUiiUmvWHIsOdyXeGSbUTqDX7s2+5SDPQ66KYgBTmM41KlIX0sT5EaW\n9zOn3D2+efENlehqokVC1NPjbl+h7oZLzcbADAznzAVxIftrguoEpz6f38Eea+ak\nDrIQPSB5EZIWqG9FVbgbM5iVGwKBgQDSzTxxXJszxvfSqcSogebMdNriOnKFA05y\nyXUQUxKe8xbn1Xu7cYknjlPFtUO7gWhKVKdzRq/ApimIoZVcPCU4J33kDDcPokJj\ni2g+6rHgEMcYTyZaA9q5B/q2dEnGEjBofD3ZxWGub3kXDXz0qMeyKJkTRD0ZGhUN\nig7UZ4++wwKBgFgNEPTPnu0HvhoaAVRfLBugQKzEsF6Tvuek4y8GAIyUat1biWWJ\nD3aCmZ3Krb64UH78yqqlVNcQrZnFiMjs3g5znqiPxvAX85RrZFXDpqpwDVUT/8DY\n5Wx5DZHEKuh6neAg5ApLyxhyeB8+g4BpsyUk+53bft05qQWtwkywNUWfAoGBAKUP\nNyi8jno4bYxyih43uPSW+1zwzwL/18lhnVwu8AGt7l2Rd9UJzY8/jrDcgjCr33F0\nX7mPu8ZpVVQ60azrG2mg4p5SQjrnnnw7iGDbfHQqLvsF3s3U/sqrSNDctXd2fpkR\nz4xZVWc0uegnE5SvI86Io3PGluC0348+buY6QP/pAoGANaqfmK767EcWuAWeZ0Oa\n/REb4Y5iGb9XGd2r8/7B1O8hhBYKwY5WE8aMJ8ZEtyAK+MJSQF+bSDia1/VbkYfg\nBPRkKnsQ57MpJGftJePuQJ8XZJoWvaKfUX6LCPwWwqphzX1Rrk48A7X1/4I97isG\nF+fYpUudBDVjKM6eQTfQ9qM=",
+    "client_email": "vertex-express@angular-sorter-473216-k8.iam.gserviceaccount.com",
+    "client_id": "109478084600222977614",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/vertex-express%40angular-sorter-473216-k8.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+}
 
 def init_client():
-    adc_path = "/etc/secrets/gcp-sa.json"  # Use the Render-mounted secret file
-    if not os.path.exists(adc_path):
-        print("ERROR: ADC file not found at", adc_path)
-        return None
-
+    # Write the hardcoded key to a temp file
+    adc_path = os.path.join(tempfile.gettempdir(), "gcp-sa.json")
+    with open(adc_path, "w") as f:
+        json.dump(SERVICE_ACCOUNT_JSON, f)
+    
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
 
-    project = os.environ.get("GCP_PROJECT", "angular-sorter-473216-k8")
+    project = SERVICE_ACCOUNT_JSON["project_id"]
     location = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
     print("[env] GCP_PROJECT:", project)
@@ -3788,6 +3813,25 @@ def init_client():
     print("[env] ADC PATH:", adc_path)
     print("[env] ADC EXISTS:", os.path.exists(adc_path))
 
+    # --------------------------
+    # Token test
+    # --------------------------
+    try:
+        creds = service_account.Credentials.from_service_account_file(
+            adc_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        creds.refresh(Request())
+        print("[token-test] OK: access token length:", len(creds.token))
+    except RefreshError as e:
+        print("[token-test] FAIL: RefreshError:", e)
+        return None
+    except Exception as e:
+        print("[token-test] FAIL:", e)
+        return None
+
+    # --------------------------
+    # Initialize GenAI client
+    # --------------------------
     try:
         client = genai.Client(
             http_options=HttpOptions(api_version="v1"),
@@ -3801,6 +3845,7 @@ def init_client():
         print("[startup] genai.Client init FAILED:", e)
         return None
 
+# Initialize the client
 GENAI_CLIENT = init_client()
 if not GENAI_CLIENT:
     print("Warning: GENAI_CLIENT not initialized. Ensure google-genai is installed and ADC is configured.")
@@ -5407,6 +5452,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
