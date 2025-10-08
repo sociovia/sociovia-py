@@ -40,10 +40,11 @@ load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"), override=True)
 
 # Load sociovia.env (project-specific config)
 load_dotenv(dotenv_path=os.path.join(os.getcwd(), "sociovia.env"), override=True)
-
+load_dotenv()
 
 
 class Config:
+    load_dotenv()
     SECRET_KEY = os.getenv("SECRET_KEY")
     print(SECRET_KEY,"is found")
     SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DATABASE_URI")
@@ -5571,6 +5572,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
