@@ -33,42 +33,30 @@ from datetime import timedelta
 # config.py
 from datetime import timedelta
 import os
+import os, json
+from dotenv import load_dotenv
+from datetime import timedelta
+
+load_dotenv()
+
+SERVICE_ACCOUNT_JSON = json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
+
 class Config:
-    # Security
-    # NOTE: For quick local testing you can hardcode, but DO NOT commit this file to any repo.
-    SECRET_KEY = "change_me_super_secret_production_key"
+    SECRET_KEY = os.getenv("SECRET_KEY")
+    SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DATABASE_URI")
+    SQLALCHEMY_TRACK_MODIFICATIONS = os.getenv("SQLALCHEMY_TRACK_MODIFICATIONS") == "True"
+    SMTP_HOST = os.getenv("SMTP_HOST")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+    SMTP_USER = os.getenv("SMTP_USER")
+    SMTP_PASS = os.getenv("SMTP_PASS")
+    MAIL_FROM = os.getenv("MAIL_FROM")
+    ADMIN_EMAILS = os.getenv("ADMIN_EMAILS").split(",")
+    APP_BASE_URL = os.getenv("APP_BASE_URL")
+    FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN")
+    VERIFY_TTL_MIN = int(os.getenv("VERIFY_TTL_MIN", 15))
+    ADMIN_LINK_TTL_HOURS = int(os.getenv("ADMIN_LINK_TTL_HOURS", 48))
+    PERMANENT_SESSION_LIFETIME = timedelta(days=int(os.getenv("PERMANENT_SESSION_LIFETIME_DAYS", 7)))
 
-    # Database (hardcoded sqlite file)
-    SQLALCHEMY_DATABASE_URI = "postgresql://dbuser:StrongPasswordHere@34.10.193.3:5432/postgres"
-
-    
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_recycle": 300,
-        "pool_pre_ping": True,
-    }
-
-    # Email Configuration (HARDCODED - replace SMTP_PASS below)
-    SMTP_HOST = "smtp.gmail.com"
-    SMTP_PORT = 587
-    SMTP_USER = "noreply.sociovia@gmail.com"
-    SMTP_PASS = "hrgm qfdi ehky uyyz"  
-    MAIL_FROM = "Sociovia <noreply.sociovia@gmail.com>"
-
-    # Admin Configuration (hardcoded)
-    ADMIN_EMAILS = ["sharan1114411@gmail.com"]
-
-    # Application URLs
-    APP_BASE_URL = "http://localhost:5000"
-    FRONTEND_ORIGIN = "http://localhost:8080"
-
-    # Timing Configuration
-    VERIFY_TTL_MIN = 15
-    ADMIN_LINK_TTL_HOURS = 48
-
-    # Session lifetime (optional)
-    PERMANENT_SESSION_LIFETIME = timedelta(days=7)
 #==============================================================================================================================================================================================================
 # ---------------- Setup ----------------
 
@@ -105,10 +93,10 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=7)
 )
 # OAuth / Facebook config — override with environment in production
-FB_APP_ID = os.getenv("FB_APP_ID", "1782321995750055")
-FB_APP_SECRET = os.getenv("FB_APP_SECRET", "f2e945de7d1ef2bfb2ce85699aead868")
-FB_API_VERSION = os.getenv("FB_API_VERSION", "v16.0")
-APP_BASE_URL = os.getenv("APP_BASE_URL", "https://6136l5dn-5000.inc1.devtunnels.ms")
+FB_APP_ID = os.getenv("FB_APP_ID", "")
+FB_APP_SECRET = os.getenv("FB_APP_SECRET", "")
+FB_API_VERSION = os.getenv("FB_API_VERSION", "")
+APP_BASE_URL = os.getenv("APP_BASE_URL", "https://sociovia-py.onrender.com")
 OAUTH_REDIRECT_BASE = os.getenv("OAUTH_REDIRECT_BASE", APP_BASE_URL)
 # default scopes for facebook-first flow; instagram scopes will be requested later when linking IG
 OAUTH_SCOPES = os.getenv("OAUTH_SCOPES", "pages_show_list,pages_read_engagement,ads_management")
@@ -402,8 +390,8 @@ def api_status():
     return jsonify({"status": user.status}), 200
 
 # ---------------- Admin APIs ----------------
-ADMIN_EMAIL = "admin@sociovia.com"
-ADMIN_PASSWORD = "admin123"
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 
 @app.route("/api/admin/login", methods=["POST"])
@@ -928,7 +916,7 @@ def allowed_file(filename):
     return os.path.splitext(filename)[1].lower() in allowed_extensions
 # put near top of file for consistent usage
 UPLOAD_BASE = os.getenv("UPLOAD_BASE", "uploads")
-APP_BASE_URL = os.getenv("APP_BASE_URL", "https://6136l5dn-5000.inc1.devtunnels.ms").rstrip('/')
+APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip('/')
 
 # update endpoint
 class Generation(db.Model):
@@ -3715,16 +3703,17 @@ except Exception:
     IMAGE_CONFIG_IS_CLASS = False
 
 # --- Configuration ---
-MODEL_ID = os.environ.get("MODEL_ID", "gemini-2.5-flash-image-preview")  # image-capable model
-TEXT_MODEL = os.environ.get("TEXT_MODEL", "gemini-flash-latest")        # text-capable model
+MODEL_ID = os.environ.get("MODEL_ID", "")  # image-capable model
+TEXT_MODEL = os.environ.get("TEXT_MODEL", "")        # text-capable model
 
 # DigitalOcean Spaces configuration
-SPACE_NAME = 'sociovia'
-SPACE_REGION = 'blr1'
+SPACE_NAME = os.environ.get("SPACE_NAME", "")
+print("[env] SPACE_NAME:", SPACE_NAME)
+SPACE_REGION = os.environ.get("SPACE_REGION")
 SPACE_ENDPOINT = f'https://{SPACE_REGION}.digitaloceanspaces.com'
-SPACE_CDN = 'https://sociovia.blr1.cdn.digitaloceanspaces.com'
-ACCESS_KEY = "DO801KRD6VWJZMATNUEB"
-SECRET_KEY = "M9iHgem8RnrKjxDrL4Sq8im6SKHglHdGTmFoFRTX42k"
+SPACE_CDN = f'https://{SPACE_NAME}.{SPACE_REGION}.cdn.digitaloceanspaces.com'
+ACCESS_KEY = os.environ.get("ACCESS_KEY")
+SECRET_KEY = os.environ.get("SECRET_KEY")"
 
 # Initialize S3 client
 if ACCESS_KEY and SECRET_KEY:
@@ -3796,47 +3785,7 @@ from google.auth.exceptions import RefreshError
 # --------------------------
 # Hardcoded Service Account JSON
 # --------------------------
-SERVICE_ACCOUNT_JSON = {
-    "type": "service_account",
-    "project_id": "angular-sorter-473216-k8",
-    "private_key_id": "b1d244150b529c30623dfa5e48c9604e887cd78c",
-    "private_key": """-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDOtyakTSfOBG2y
-7Mk4SWCR8CrKEEK6Dz6zW1Gfwt6AXLACvbHuFRuW+nJ6gB/WJGP50mvwEU1xtohQ
-4qzcf45YQWfAYSTNu4tNv4RZR4w5DJcu0wK8nzL2RAS3/6h0Hu+F7fIRjVKfCKfa
-5MbFNVflnI8+cdUSSScTecNzRJaMVscuvzLG8ZUPVTIGxT/osb0yAL54swo0h0lM
-IUTP5sBV+7mwCQFaXtponhTxVUD3pVqZvq4XkAPx0wqRY1Gsv5RhP+Xa/ZzciqYZ
-42PBw0+aAIsWRn0rGyaXK6JfOaPPrA3I6PcZaIS4ktofac09mJ8+EybNZ/SWjwn0
-l5iy+J2RAgMBAAECggEAZgErwMzP9RHrXe0JWEyhKjKkssQ2YSDPtGq+CwN6j0Xt
-ltSrngvtauGYJwnda+rWKLtkhvjKye+kMaHBYidRgwx3WY+2PQ0sLwfwE6xCLg6f
-9burcI9wcuRanb87DV4MnP6vQmkF2bNIPTRCP6NUhdntN4eteFH/xdUClPlF/uaZ
-ifyVtQdY+BqdBOFCef6QDhq/OgKL8smI/oXXeNA0zrJI9xePJl+au2njSanDz0zT
-HvrxtdcdmBD65ZZ9kJOVMkZngU+/JkojPwzRw4BCiCdursuvYBgyfnGB1Q2h3VP3
-cC7oca50ZySWTtTmCz7khKAmoJiSm/3TnSJgJn+iNwKBgQD7CZ9JitD/xgjoW6Bt
-xOnycIGv/JUiiUmvWHIsOdyXeGSbUTqDX7s2+5SDPQ66KYgBTmM41KlIX0sT5EaW
-9zOn3D2+efENlehqokVC1NPjbl+h7oZLzcbADAznzAVxIftrguoEpz6f38Eea+ak
-DrIQPSB5EZIWqG9FVbgbM5iVGwKBgQDSzTxxXJszxvfSqcSogebMdNriOnKFA05y
-yXUQUxKe8xbn1Xu7cYknjlPFtUO7gWhKVKdzRq/ApimIoZVcPCU4J33kDDcPokJj
-i2g+6rHgEMcYTyZaA9q5B/q2dEnGEjBofD3ZxWGub3kXDXz0qMeyKJkTRD0ZGhUN
-ig7UZ4++wwKBgFgNEPTPnu0HvhoaAVRfLBugQKzEsF6Tvuek4y8GAIyUat1biWWJ
-D3aCmZ3Krb64UH78yqqlVNcQrZnFiMjs3g5znqiPxvAX85RrZFXDpqpwDVUT/8DY
-5Wx5DZHEKuh6neAg5ApLyxhyeB8+g4BpsyUk+53bft05qQWtwkywNUWfAoGBAKUP
-Nyi8jno4bYxyih43uPSW+1zwzwL/18lhnVwu8AGt7l2Rd9UJzY8/jrDcgjCr33F0
-X7mPu8ZpVVQ60azrG2mg4p5SQjrnnnw7iGDbfHQqLvsF3s3U/sqrSNDctXd2fpkR
-z4xZVWc0uegnE5SvI86Io3PGluC0348+buY6QP/pAoGANaqfmK767EcWuAWeZ0Oa
-/REb4Y5iGb9XGd2r8/7B1O8hhBYKwY5WE8aMJ8ZEtyAK+MJSQF+bSDia1/VbkYfg
-BPRkKnsQ57MpJGftJePuQJ8XZJoWvaKfUX6LCPwWwqphzX1Rrk48A7X1/4I97isG
-F+fYpUudBDVjKM6eQTfQ9qM=
------END PRIVATE KEY-----""",
-    "client_email": "vertex-express@angular-sorter-473216-k8.iam.gserviceaccount.com",
-    "client_id": "109478084600222977614",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/vertex-express%40angular-sorter-473216-k8.iam.gserviceaccount.com",
-    "universe_domain": "googleapis.com"
-}
-
+SERVICE_ACCOUNT_JSON =json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
 def init_client():
     # Write the hardcoded key to a temp file
     adc_path = os.path.join(tempfile.gettempdir(), "gcp-sa.json")
@@ -4000,7 +3949,7 @@ if s3:
 
 # --- Flask app ---
 
-app.config['SQLALCHEMY_DATABASE_URI'] = "postgresql://dbuser:StrongPasswordHere@34.10.193.3:5432/postgres"
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("SQLALCHEMY_DATABASE_URI")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 
@@ -5492,6 +5441,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
