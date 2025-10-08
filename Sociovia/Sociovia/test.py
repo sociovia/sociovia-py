@@ -933,6 +933,7 @@ APP_BASE_URL = os.getenv("APP_BASE_URL", "https://6136l5dn-5000.inc1.devtunnels.
 # update endpoint
 class Generation(db.Model):
     __tablename__ = 'conversations'
+    __table_args__ = {'extend_existing': True} 
     
     id = db.Column(db.String(32), primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
@@ -4008,7 +4009,8 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Define Conversation model
 class Conversation(db.Model):
-    __tablename__ = 'conversationss'
+    __tablename__ = 'conversations'
+    __table_args__ = {'extend_existing': True} 
     id = db.Column(db.String(32), primary_key=True)
     user_id = db.Column(db.String(128), nullable=False)
     workspace_id = db.Column(db.String(128), nullable=False)
@@ -5490,6 +5492,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
