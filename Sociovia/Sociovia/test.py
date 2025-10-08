@@ -42,6 +42,7 @@ load_dotenv()
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY")
+    print(SECRET_KEY,"is found)
     SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DATABASE_URI")
     SQLALCHEMY_TRACK_MODIFICATIONS = os.getenv("SQLALCHEMY_TRACK_MODIFICATIONS") == "True"
     SMTP_HOST = os.getenv("SMTP_HOST")
@@ -49,7 +50,14 @@ class Config:
     SMTP_USER = os.getenv("SMTP_USER")
     SMTP_PASS = os.getenv("SMTP_PASS")
     MAIL_FROM = os.getenv("MAIL_FROM")
-    ADMIN_EMAILS = os.getenv("ADMIN_EMAILS").split(",")
+   # safer parsing of ADMIN_EMAILS
+    _raw_admins = os.getenv("ADMIN_EMAILS", "")
+    ADMIN_EMAILS = [e.strip() for e in _raw_admins.split(",") if e.strip()]
+    
+    # fallback default (if you want a guaranteed admin)
+    if not ADMIN_EMAILS:
+        ADMIN_EMAILS = ["admin@sociovia.com"]
+
     APP_BASE_URL = os.getenv("APP_BASE_URL")
     FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN")
     VERIFY_TTL_MIN = int(os.getenv("VERIFY_TTL_MIN", 15))
@@ -93,6 +101,7 @@ app.config.update(
 )
 # OAuth / Facebook config — override with environment in production
 FB_APP_ID = os.getenv("FB_APP_ID", "")
+print(FB_APP_ID)
 FB_APP_SECRET = os.getenv("FB_APP_SECRET", "")
 FB_API_VERSION = os.getenv("FB_API_VERSION", "")
 APP_BASE_URL = os.getenv("APP_BASE_URL", "https://sociovia-py.onrender.com")
@@ -5556,6 +5565,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
