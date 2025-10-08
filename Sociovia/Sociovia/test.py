@@ -3786,28 +3786,109 @@ from google.auth.exceptions import RefreshError
 # Hardcoded Service Account JSON
 # --------------------------
 SERVICE_ACCOUNT_JSON =json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
-def init_client():
-    # Write the hardcoded key to a temp file
-    adc_path = os.path.join(tempfile.gettempdir(), "gcp-sa.json")
-    with open(adc_path, "w") as f:
-        json.dump(SERVICE_ACCOUNT_JSON, f, indent=2)  # preserve newlines properly
-    
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
 
+# ---- SERVICE ACCOUNT LOADER (replace fragile json.loads(...) usage) ----
+import os, json, base64, tempfile
+from pathlib import Path
+
+def load_service_account_env():
+    """
+    Returns a dict with service account JSON or None.
+    Handles:
+      - SERVICE_ACCOUNT_FILE -> path to JSON file
+      - SERVICE_ACCOUNT_JSON -> single-line JSON (may be wrapped with quotes, or contain literal \n)
+      - SERVICE_ACCOUNT_JSON_B64 -> base64(JSON)
+    """
+    # 1) Explicit file path
+    sa_file = os.getenv("SERVICE_ACCOUNT_FILE")
+    if sa_file:
+        p = Path(sa_file)
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception as e:
+                raise RuntimeError(f"SERVICE_ACCOUNT_FILE exists but is invalid JSON: {sa_file}") from e
+
+    # 2) Raw JSON env var (common)
+    raw = os.getenv("SERVICE_ACCOUNT_JSON")
+    if raw:
+        # Debug-friendly: trim outer whitespace
+        raw = raw.strip()
+
+        # Remove wrapping single or double quotes if present (Render often adds these)
+        if (raw.startswith("'") and raw.endswith("'")) or (raw.startswith('"') and raw.endswith('"')):
+            raw = raw[1:-1]
+
+        # Try direct parse
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+
+        # Try replacing literal \n with actual newlines (common when converting key to single line)
+        try:
+            fixed = raw.replace('\\n', '\n')
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+
+        # Try decoding escaped unicode sequences
+        try:
+            candidate = raw.encode('utf-8').decode('unicode_escape')
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+        # If we reach here, raw exists but none of the fixes worked
+        raise RuntimeError("SERVICE_ACCOUNT_JSON found but invalid JSON after attempts to fix quotes/escapes.")
+
+    # 3) Base64-encoded JSON (robust for dashboards that mangle characters)
+    sa_b64 = os.getenv("SERVICE_ACCOUNT_JSON_B64")
+    if sa_b64:
+        try:
+            decoded = base64.b64decode(sa_b64).decode("utf-8")
+            return json.loads(decoded)
+        except Exception as e:
+            raise RuntimeError("SERVICE_ACCOUNT_JSON_B64 present but invalid") from e
+
+    # not found
+    return None
+
+# Load it once and make available
+SERVICE_ACCOUNT_JSON = load_service_account_env()
+if SERVICE_ACCOUNT_JSON is None:
+    # helpful message for logs — Gunicorn will show this and you can act
+    raise RuntimeError(
+        "Service account not found. Set SERVICE_ACCOUNT_FILE (path), "
+        "or SERVICE_ACCOUNT_JSON (single-line JSON), or SERVICE_ACCOUNT_JSON_B64 (base64) in your Render environment."
+    )
+
+# Persist to a file and set GOOGLE_APPLICATION_CREDENTIALS so google libs work normally
+adc_path = os.path.join(tempfile.gettempdir(), "gcp-sa.json")
+Path(adc_path).write_text(json.dumps(SERVICE_ACCOUNT_JSON, indent=2), encoding="utf-8")
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
+
+# optional: debug prints (safe for logs) - prints project and whether file exists
+print("[env] GCP_PROJECT:", SERVICE_ACCOUNT_JSON.get("project_id"))
+print("[env] ADC PATH SET:", os.path.exists(adc_path))
+# ------------------------------------------------------------------------
+
+
+
+def init_client():
     project = SERVICE_ACCOUNT_JSON["project_id"]
     location = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
     print("[env] GCP_PROJECT:", project)
     print("[env] LOCATION:", location)
-    print("[env] ADC PATH:", adc_path)
-    print("[env] ADC EXISTS:", os.path.exists(adc_path))
+    print("[env] ADC PATH:", os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
+    print("[env] ADC EXISTS:", os.path.exists(os.environ["GOOGLE_APPLICATION_CREDENTIALS"]))
 
-    # --------------------------
     # Token test
-    # --------------------------
     try:
         creds = service_account.Credentials.from_service_account_file(
-            adc_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"],
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
         creds.refresh(Request())
         print("[token-test] OK: access token length:", len(creds.token))
@@ -3818,9 +3899,7 @@ def init_client():
         print("[token-test] FAIL:", e)
         return None
 
-    # --------------------------
-    # Initialize GenAI client
-    # --------------------------
+    # genai client init (as you already have)
     try:
         client = genai.Client(
             http_options=HttpOptions(api_version="v1"),
@@ -3833,7 +3912,6 @@ def init_client():
     except Exception as e:
         print("[startup] genai.Client init FAILED:", e)
         return None
-
 # Initialize the client
 GENAI_CLIENT = init_client()
 if not GENAI_CLIENT:
@@ -5441,6 +5519,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
