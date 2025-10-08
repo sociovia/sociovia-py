@@ -3782,24 +3782,83 @@ from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 
-# --------------------------
-# Hardcoded Service Account JSON
-# --------------------------
-SERVICE_ACCOUNT_JSON =json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
-
-# ---- SERVICE ACCOUNT LOADER (replace fragile json.loads(...) usage) ----
-import os, json, base64, tempfile
+# ----------------- Load service account from project/app root -----------------
+import os
+import json
+import tempfile
+import re
+import base64
 from pathlib import Path
 
-def load_service_account_env():
+FILENAMES_TO_CHECK = ("gcp-sa.json", "gcp-sa.js", "gcp-sa.jsx", "gcp-sa.cjs")
+
+def find_in_project_root(filenames=FILENAMES_TO_CHECK, max_ancestors=8):
     """
-    Returns a dict with service account JSON or None.
-    Handles:
-      - SERVICE_ACCOUNT_FILE -> path to JSON file
-      - SERVICE_ACCOUNT_JSON -> single-line JSON (may be wrapped with quotes, or contain literal \n)
-      - SERVICE_ACCOUNT_JSON_B64 -> base64(JSON)
+    Search for filenames starting from cwd (project root) and also up from this file's directory.
+    Returns the Path of the first match or None.
     """
-    # 1) Explicit file path
+    # 1) Prefer current working directory (usually the project root in deploys)
+    cwd = Path.cwd().resolve()
+    for fname in filenames:
+        candidate = cwd / fname
+        if candidate.exists():
+            return candidate
+
+    # 2) Also search upward from this file (__file__) to catch nested layouts
+    this_file = Path(__file__).resolve()
+    for level in range(max_ancestors):
+        ancestor = this_file.parents[level]
+        for fname in filenames:
+            candidate = ancestor / fname
+            if candidate.exists():
+                return candidate
+
+    # Not found
+    return None
+
+def extract_json_from_js_text(text):
+    """
+    Try to extract a JSON object from JS wrapper files.
+    Works for patterns like:
+      - module.exports = { ... };
+      - export default { ... };
+      - const SA = { ... };
+    Returns JSON string or raises ValueError.
+    """
+    s = text.strip()
+    # If raw JSON, return directly
+    if s.startswith("{") and s.endswith("}"):
+        return s
+
+    # Remove common JS wrappers: 'module.exports =', 'export default'
+    # Find first '{' and last '}' and return substring
+    first = s.find('{')
+    last = s.rfind('}')
+    if first != -1 and last != -1 and last > first:
+        candidate = s[first:last+1]
+        # remove comments inside candidate
+        candidate = re.sub(r'/\*.*?\*/', '', candidate, flags=re.DOTALL)
+        candidate = re.sub(r'//.*', '', candidate)
+        return candidate.strip()
+
+    raise ValueError("No JSON object found in JS text")
+
+def load_service_account_from_root_or_env():
+    # 1) Try project/app root
+    fpath = find_in_project_root()
+    if fpath:
+        raw = fpath.read_text(encoding="utf-8")
+        try:
+            return json.loads(raw)
+        except Exception:
+            # If JS wrapper, attempt extraction
+            try:
+                js_json = extract_json_from_js_text(raw)
+                return json.loads(js_json)
+            except Exception as e:
+                raise RuntimeError(f"Found {fpath} but couldn't parse JSON: {e}") from e
+
+    # 2) Fallback: explicit file path via env
     sa_file = os.getenv("SERVICE_ACCOUNT_FILE")
     if sa_file:
         p = Path(sa_file)
@@ -3807,42 +3866,23 @@ def load_service_account_env():
             try:
                 return json.loads(p.read_text(encoding="utf-8"))
             except Exception as e:
-                raise RuntimeError(f"SERVICE_ACCOUNT_FILE exists but is invalid JSON: {sa_file}") from e
+                raise RuntimeError(f"SERVICE_ACCOUNT_FILE exists but invalid JSON: {sa_file}") from e
 
-    # 2) Raw JSON env var (common)
+    # 3) Fallback: single-line JSON env var
     raw = os.getenv("SERVICE_ACCOUNT_JSON")
     if raw:
-        # Debug-friendly: trim outer whitespace
         raw = raw.strip()
-
-        # Remove wrapping single or double quotes if present (Render often adds these)
         if (raw.startswith("'") and raw.endswith("'")) or (raw.startswith('"') and raw.endswith('"')):
             raw = raw[1:-1]
+        # try direct, then fixes
+        for candidate in (raw, raw.replace('\\n', '\n'), raw.encode('utf-8').decode('unicode_escape')):
+            try:
+                return json.loads(candidate)
+            except Exception:
+                continue
+        raise RuntimeError("SERVICE_ACCOUNT_JSON present but invalid after attempts to fix it.")
 
-        # Try direct parse
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
-
-        # Try replacing literal \n with actual newlines (common when converting key to single line)
-        try:
-            fixed = raw.replace('\\n', '\n')
-            return json.loads(fixed)
-        except json.JSONDecodeError:
-            pass
-
-        # Try decoding escaped unicode sequences
-        try:
-            candidate = raw.encode('utf-8').decode('unicode_escape')
-            return json.loads(candidate)
-        except Exception:
-            pass
-
-        # If we reach here, raw exists but none of the fixes worked
-        raise RuntimeError("SERVICE_ACCOUNT_JSON found but invalid JSON after attempts to fix quotes/escapes.")
-
-    # 3) Base64-encoded JSON (robust for dashboards that mangle characters)
+    # 4) Fallback: base64 env var
     sa_b64 = os.getenv("SERVICE_ACCOUNT_JSON_B64")
     if sa_b64:
         try:
@@ -3851,29 +3891,27 @@ def load_service_account_env():
         except Exception as e:
             raise RuntimeError("SERVICE_ACCOUNT_JSON_B64 present but invalid") from e
 
-    # not found
+    # Not found
     return None
 
-# Load it once and make available
-SERVICE_ACCOUNT_JSON = load_service_account_env()
+# --- LOAD and WRITE credentials file for Google libs ---
+SERVICE_ACCOUNT_JSON = load_service_account_from_root_or_env()
 if SERVICE_ACCOUNT_JSON is None:
-    # helpful message for logs — Gunicorn will show this and you can act
     raise RuntimeError(
-        "Service account not found. Set SERVICE_ACCOUNT_FILE (path), "
-        "or SERVICE_ACCOUNT_JSON (single-line JSON), or SERVICE_ACCOUNT_JSON_B64 (base64) in your Render environment."
+        "Service account not found. Place 'gcp-sa.json' or 'gcp-sa.js' at the project root (cwd) "
+        "or set SERVICE_ACCOUNT_FILE / SERVICE_ACCOUNT_JSON / SERVICE_ACCOUNT_JSON_B64."
     )
 
-# Persist to a file and set GOOGLE_APPLICATION_CREDENTIALS so google libs work normally
-adc_path = os.path.join(tempfile.gettempdir(), "gcp-sa.json")
-Path(adc_path).write_text(json.dumps(SERVICE_ACCOUNT_JSON, indent=2), encoding="utf-8")
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
+# write to temp file and set GOOGLE_APPLICATION_CREDENTIALS
+adc_path = Path(tempfile.gettempdir()) / "gcp-sa.json"
+adc_path.write_text(json.dumps(SERVICE_ACCOUNT_JSON, indent=2), encoding="utf-8")
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_path)
 
-# optional: debug prints (safe for logs) - prints project and whether file exists
+# optional safe logs
+print("[env] Loaded SA from:", find_in_project_root() or "env")
 print("[env] GCP_PROJECT:", SERVICE_ACCOUNT_JSON.get("project_id"))
-print("[env] ADC PATH SET:", os.path.exists(adc_path))
+print("[env] ADC PATH:", os.environ["GOOGLE_APPLICATION_CREDENTIALS"], "exists:", adc_path.exists())
 # ------------------------------------------------------------------------
-
-
 
 def init_client():
     project = SERVICE_ACCOUNT_JSON["project_id"]
@@ -5519,6 +5557,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
