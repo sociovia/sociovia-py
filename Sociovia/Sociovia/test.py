@@ -3713,7 +3713,7 @@ SPACE_REGION = os.environ.get("SPACE_REGION")
 SPACE_ENDPOINT = f'https://{SPACE_REGION}.digitaloceanspaces.com'
 SPACE_CDN = f'https://{SPACE_NAME}.{SPACE_REGION}.cdn.digitaloceanspaces.com'
 ACCESS_KEY = os.environ.get("ACCESS_KEY")
-SECRET_KEY = os.environ.get("SECRET_KEY")"
+SECRET_KEY = os.environ.get("SECRET_KEY")
 
 # Initialize S3 client
 if ACCESS_KEY and SECRET_KEY:
@@ -5441,6 +5441,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
