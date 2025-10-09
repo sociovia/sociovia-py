@@ -2155,104 +2155,283 @@ OAUTH_SCOPES = [
     "instagram_basic",            # Read Instagram account profile info
     "instagram_content_publish"   # Publish content to Instagram business accounts
 ]
+from urllib.parse import parse_qs, unquote_plus
 
-# 6) save/update social accounts
-saved = []
-db_error = None
+@app.route('/api/oauth/facebook/callback', methods=['GET'])
+@app.route('/api/oauth/instagram/callback', methods=['GET'])
+def oauth_facebook_callback():
+    code = request.args.get('code')
+    # keep default state from request.args, but we'll try to extract a raw unquoted value below
+    state = request.args.get('state') or ''
+    error = request.args.get('error')
+    frontend = FRONTEND_BASE_URL.rstrip('/')
 
-# Defensive: ensure session is clean before starting
-try:
-    db.session.rollback()
-except Exception:
-    # swallow — best effort to return session to clean state
-    pass
+    def render_response(payload):
+        payload_json = json.dumps(payload)
+        return render_template_string("""
+<!doctype html><html><head><meta charset="utf-8"/></head><body>
+<script>
+(function(){
+  var payload = {{payload|safe}};
+  var targetOrigin = "{{frontend}}";
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(payload, targetOrigin);
+      window.close();
+    } else {
+      var frag = "data=" + encodeURIComponent(JSON.stringify(payload));
+      window.location.href = "{{frontend}}/oauth-complete#" + frag;
+    }
+  } catch(e) {
+    var frag = "data=" + encodeURIComponent(JSON.stringify(payload));
+    window.location.href = "{{frontend}}/oauth-complete#" + frag;
+  }
+})();
+</script>
+</body></html>
+        """, payload=payload_json, frontend=frontend)
 
-try:
-    for p in pages:
-        page_id = str(p.get('id'))
-        page_name = p.get('name') or ""
-        page_token = p.get('access_token') or long_token
-        ig = p.get('instagram_business_account')
-        ig_id = str(ig.get('id')) if ig else None
+    current_app.logger.debug("oauth callback raw_query_string=%r", request.query_string)
 
-        current_app.logger.info(f"Saving page id={page_id}, name={page_name}, attaching user_id={user_id}")
+    # 1) validate
+    if error or not code:
+        payload = {"type": "sociovia_oauth_complete", "success": False, "state": state,
+                   "fb_error": {"message": error or "no_code"}}
+        return render_response(payload)
 
+    # 2) exchange code -> short token
+    token_url = f"https://graph.facebook.com/{FB_API_VERSION}/oauth/access_token"
+    params = {
+        'client_id': FB_APP_ID,
+        'client_secret': FB_APP_SECRET,
+        'redirect_uri': f"{OAUTH_REDIRECT_BASE.rstrip('/')}/api/oauth/facebook/callback",
+        'code': code
+    }
+    try:
+        r = requests.get(token_url, params=params, timeout=10)
+        data = r.json()
+        if 'error' in data:
+            raise ValueError(data['error'])
+        short_token = data.get('access_token')
+    except Exception as exc:
+        payload = {"type": "sociovia_oauth_complete", "success": False, "state": state,
+                   "fb_error": {"message": "token_exchange_failed", "details": str(exc)}}
+        return render_response(payload)
+
+    # 3) exchange short -> long (best-effort)
+    exch_url = f"https://graph.facebook.com/{FB_API_VERSION}/oauth/access_token"
+    exch_params = {
+        'grant_type': 'fb_exchange_token',
+        'client_id': FB_APP_ID,
+        'client_secret': FB_APP_SECRET,
+        'fb_exchange_token': short_token
+    }
+    try:
+        r2 = requests.get(exch_url, params=exch_params, timeout=10)
+        long_token = r2.json().get('access_token', short_token)
+    except Exception:
+        long_token = short_token
+
+    # 4) fetch pages
+    try:
+        pages_url = f"https://graph.facebook.com/{FB_API_VERSION}/me/accounts"
+        pages_r = requests.get(pages_url, params={
+            'access_token': long_token,
+            'fields': 'id,name,access_token,instagram_business_account'
+        }, timeout=10)
+        pages = pages_r.json().get('data', [])
+    except Exception as exc:
+        payload = {"type": "sociovia_oauth_complete", "success": False, "state": state,
+                   "fb_error": {"message": "fetch_pages_failed", "details": str(exc)}}
+        return render_response(payload)
+
+    # -------------------------------------------------------------------------
+    # 5) resolve user - PRIORITIZE explicit request user_id (from query param), then session, then state fallback
+    user = None
+    user_id = None
+
+    # 5.a check query param first
+    raw_q_uid = request.args.get("user_id")
+    current_app.logger.debug("DEBUG: callback raw user_id (query param): %r", raw_q_uid)
+    if raw_q_uid:
         try:
-            # Use the session explicitly (avoids odd global state sometimes)
-            existing = db.session.query(SocialAccount).filter_by(
-                provider='facebook', provider_user_id=page_id
-            ).with_for_update(read=True).first()  # optional .with_for_update to avoid races
-
-            if existing:
-                # normalize existing.user_id if stored as empty string
-                try:
-                    if existing.user_id == "" or existing.user_id is None:
-                        existing.user_id = None
-                except Exception:
-                    existing.user_id = None
-
-                existing.access_token = page_token
-                existing.scopes = ",".join(OAUTH_SCOPES) if isinstance(OAUTH_SCOPES, (list, tuple)) else str(OAUTH_SCOPES)
-                existing.instagram_business_id = ig_id
-
-                # only overwrite/attach owner if we have a resolved user_id
-                if user_id:
-                    try:
-                        existing.user_id = int(user_id)
-                    except Exception:
-                        existing.user_id = user_id
-                    current_app.logger.info(f"Updated existing SocialAccount {page_id} owner -> {existing.user_id}")
-
-                db.session.add(existing)
-                db.session.flush()
-                saved.append(existing.serialize())
+            parsed_uid = int(raw_q_uid)
+            maybe_user = User.query.get(parsed_uid)
+            if maybe_user:
+                user = maybe_user
+                user_id = maybe_user.id
+                current_app.logger.info(f"oauth callback: using user_id from query param: {user_id}")
             else:
-                sa = SocialAccount(
-                    provider='facebook',
-                    provider_user_id=page_id,
-                    account_name=page_name,
-                    access_token=page_token,
-                    user_id=(int(user_id) if user_id else None),
-                    scopes=",".join(OAUTH_SCOPES) if isinstance(OAUTH_SCOPES, (list, tuple)) else str(OAUTH_SCOPES),
-                    instagram_business_id=ig_id
-                )
-                db.session.add(sa)
-                db.session.flush()
-                current_app.logger.info(f"Created SocialAccount {page_id} owner -> {sa.user_id}")
-                saved.append(sa.serialize())
-
+                current_app.logger.warning(f"oauth callback: user_id {parsed_uid} provided but user not found")
         except Exception as e:
-            # rollback and break on DB issues to avoid partial/inconsistent state
-            current_app.logger.exception("Failed to save social account (per-account exception)")
-            try:
-                db.session.rollback()
-            except Exception:
-                current_app.logger.exception("db rollback failed after per-account exception")
-            db_error = str(e)
-            break
+            current_app.logger.warning(f"oauth callback: invalid user_id query param: {raw_q_uid} ({e})")
 
-    # final commit (only if no per-account DB error)
-    if db_error is None:
+    # 5.b fallback to session if query param not present / invalid
+    if not user:
+        session_user = get_user_from_request(require=False)
+        if session_user:
+            user = session_user
+            user_id = getattr(session_user, "id", None)
+            current_app.logger.info(f"oauth callback: resolved session user_id={user_id}")
+
+    # 5.c final fallback: parse state JSON or simple substring (kept but lower priority)
+    if not user:
+        # Try to extract raw state from raw query string and unquote it first (handles + and %xx)
         try:
-            db.session.commit()
+            raw_qs = request.query_string.decode('utf-8', errors='ignore') or ''
+            parsed_qs = parse_qs(raw_qs, keep_blank_values=True)
+            raw_state_val = parsed_qs.get('state', [None])[0]
+            if raw_state_val:
+                try:
+                    decoded_state = unquote_plus(raw_state_val)
+                    current_app.logger.debug("oauth callback: decoded_state from raw_qs=%r", decoded_state)
+                    state = decoded_state
+                except Exception as e:
+                    current_app.logger.debug("oauth callback: failed to unquote_plus state (%s), falling back to request.args", e)
+            # else keep original state from request.args
         except Exception as e:
-            current_app.logger.exception("Final commit failed in oauth callback")
-            try:
-                db.session.rollback()
-            except Exception:
-                current_app.logger.exception("db rollback failed after commit exception")
-            db_error = str(e)
+            current_app.logger.debug("oauth callback: error extracting raw state from query_string: %s", e)
 
-except Exception as e:
-    # Unexpected outer-level error: make sure session is rolled back
-    current_app.logger.exception("Unexpected error during pages->save flow")
+        if state:
+            try:
+                parsed_state = json.loads(state)
+                if isinstance(parsed_state, dict) and parsed_state.get("user_id"):
+                    try:
+                        parsed_uid = int(parsed_state.get("user_id"))
+                        maybe_user = User.query.get(parsed_uid)
+                        if maybe_user:
+                            user = maybe_user
+                            user_id = maybe_user.id
+                            current_app.logger.info(f"oauth callback: resolved user_id from state JSON: {user_id}")
+                    except Exception:
+                        current_app.logger.warning("oauth callback: invalid user_id in state JSON")
+            except Exception:
+                # not JSON — attempt simple "user_id=NN" substring extraction
+                if "user_id=" in state:
+                    try:
+                        tail = state.split("user_id=")[1].split("&")[0]
+                        parsed_uid = int(tail)
+                        maybe_user = User.query.get(parsed_uid)
+                        if maybe_user:
+                            user = maybe_user
+                            user_id = maybe_user.id
+                            current_app.logger.info(f"oauth callback: resolved user_id from state substring: {user_id}")
+                    except Exception:
+                        current_app.logger.warning("oauth callback: failed to parse user_id from state substring")
+
+    # -------------------------------------------------------------------------
+    # 6) save/update social accounts
+    saved = []
+    db_error = None
+
+    # Defensive: ensure session is clean before starting DB operations
     try:
         db.session.rollback()
     except Exception:
-        current_app.logger.exception("db rollback failed in outer except")
-    db_error = db_error or str(e)
+        current_app.logger.debug("oauth callback: db.session.rollback() at start failed/ignored")
+
+    try:
+        for p in pages:
+            page_id = str(p.get('id'))
+            page_name = p.get('name') or ""
+            page_token = p.get('access_token') or long_token
+            ig = p.get('instagram_business_account')
+            ig_id = str(ig.get('id')) if ig else None
+
+            current_app.logger.info(f"Saving page id={page_id}, name={page_name}, attaching user_id={user_id}")
+            current_app.logger.debug("DEBUG: saving page, attaching user_id=%r page_id=%r", user_id, page_id)
+
+            try:
+                # use explicit session query
+                existing = db.session.query(SocialAccount).filter_by(
+                    provider='facebook', provider_user_id=page_id
+                ).first()
+
+                if existing:
+                    # normalize existing.user_id if stored as empty string (or string "None")
+                    try:
+                        if existing.user_id == "" or existing.user_id is None:
+                            existing.user_id = None
+                    except Exception:
+                        existing.user_id = None
+
+                    existing.access_token = page_token
+                    existing.scopes = ",".join(OAUTH_SCOPES) if isinstance(OAUTH_SCOPES, (list, tuple)) else str(OAUTH_SCOPES)
+                    existing.instagram_business_id = ig_id
+
+                    # only overwrite/attach owner if we have a resolved user_id
+                    if user_id:
+                        try:
+                            existing.user_id = int(user_id)
+                        except Exception:
+                            existing.user_id = user_id
+                        current_app.logger.info(f"Updated existing SocialAccount {page_id} owner -> {existing.user_id}")
+                    db.session.add(existing)
+                    db.session.flush()
+                    saved.append(existing.serialize())
+                else:
+                    sa = SocialAccount(
+                        provider='facebook',
+                        provider_user_id=page_id,
+                        account_name=page_name,
+                        access_token=page_token,
+                        user_id=(int(user_id) if user_id else None),
+                        scopes=",".join(OAUTH_SCOPES) if isinstance(OAUTH_SCOPES, (list, tuple)) else str(OAUTH_SCOPES),
+                        instagram_business_id=ig_id
+                    )
+                    db.session.add(sa)
+                    db.session.flush()
+                    current_app.logger.info(f"Created SocialAccount {page_id} owner -> {sa.user_id}")
+                    current_app.logger.debug("DEBUG: created SocialAccount %r", sa.serialize())
+                    saved.append(sa.serialize())
+            except Exception as e:
+                # rollback and break on DB issues to avoid partial/inconsistent state
+                try:
+                    db.session.rollback()
+                except Exception:
+                    current_app.logger.exception("db rollback failed after per-account exception")
+                current_app.logger.exception("Failed to save social account (per-account)")
+                db_error = str(e)
+                break
+    except Exception as e:
+        current_app.logger.exception("Unexpected error iterating pages")
+        db_error = str(e)
+
+    # final commit (if no earlier DB error)
+    try:
+        if db_error is None:
+            try:
+                db.session.commit()
+            except Exception as e:
+                current_app.logger.exception("Final commit failed in oauth callback")
+                try:
+                    db.session.rollback()
+                except Exception:
+                    current_app.logger.exception("db rollback failed after commit exception")
+                db_error = str(e)
+    except Exception as e:
+        current_app.logger.exception("Unexpected error during final commit handling")
+        try:
+            db.session.rollback()
+        except Exception:
+            current_app.logger.exception("db rollback failed in outer except")
+        db_error = db_error or str(e)
+
+    resp_payload = {
+        "type": "sociovia_oauth_complete",
+        "success": (len(saved) > 0 and db_error is None),
+        "state": state,
+        "saved": saved,
+        "fb_pages_count": len(pages),
+        "user_attached": bool(user_id)
+    }
+    if db_error:
+        resp_payload["db_error"] = db_error
+
+    return render_response(resp_payload)
 
 
+# -------------------------------------------------------------------------
 @app.route('/api/oauth/facebook/save-selection', methods=['POST'])
 @cross_origin(origins=["https://sociovia.com","https://6136l5dn-5000.inc1.devtunnels.ms"], supports_credentials=True)
 def oauth_save_selection():
@@ -2277,7 +2456,7 @@ def oauth_save_selection():
         return jsonify({'success': False, 'error': 'invalid_json'}), 400
 
     raw_user_id = data.get('user_id')
-    print("DEBUG: oauth_save_selection raw_user_id:", raw_user_id, flush=True)
+    current_app.logger.debug("DEBUG: oauth_save_selection raw_user_id: %r", raw_user_id)
     if raw_user_id is None or raw_user_id == "":
         return jsonify({'success': False, 'error': 'missing_user_id'}), 400
 
@@ -2293,6 +2472,12 @@ def oauth_save_selection():
     accounts = data.get('accounts', [])
     features = data.get('features', {}) or {}
     saved = []
+
+    # Defensive: ensure session is clean before DB ops
+    try:
+        db.session.rollback()
+    except Exception:
+        current_app.logger.debug("oauth_save_selection: db.session.rollback() at start failed/ignored")
 
     try:
         for a in accounts:
@@ -2314,68 +2499,87 @@ def oauth_save_selection():
             else:
                 scopes_list = [k for k, v in (features or {}).items() if v]
 
-            existing = SocialAccount.query.filter_by(provider=provider, provider_user_id=pid).first()
-            if existing:
-                # normalize user_id empty-string -> None
-                if existing.user_id == "" or existing.user_id is None:
-                    existing.user_id = None
+            try:
+                existing = db.session.query(SocialAccount).filter_by(provider=provider, provider_user_id=pid).first()
+                if existing:
+                    # normalize user_id empty-string -> None
+                    if existing.user_id == "" or existing.user_id is None:
+                        existing.user_id = None
 
-                if name:
-                    existing.account_name = name
-                if access_token:
-                    existing.access_token = access_token
-                if instagram_business_id:
-                    existing.instagram_business_id = instagram_business_id
+                    if name:
+                        existing.account_name = name
+                    if access_token:
+                        existing.access_token = access_token
+                    if instagram_business_id:
+                        existing.instagram_business_id = instagram_business_id
 
-                # Only set user_id if existing has no owner or owner == same user
+                    # Only set user_id if existing has no owner or owner == same user
+                    try:
+                        if not existing.user_id:
+                            existing.user_id = user.id
+                        elif int(existing.user_id) == user.id:
+                            existing.user_id = user.id
+                        # else leave as-is (do not override another user's ownership)
+                    except Exception:
+                        existing.user_id = user.id
+
+                    # merge scopes if provided
+                    if scopes_list:
+                        existing_scopes = []
+                        if existing.scopes:
+                            if isinstance(existing.scopes, str):
+                                existing_scopes = [s.strip() for s in existing.scopes.replace("{","").replace("}","").split(",") if s.strip()]
+                            elif isinstance(existing.scopes, (list, tuple)):
+                                existing_scopes = list(existing.scopes)
+                        merged = list(dict.fromkeys(existing_scopes + scopes_list))
+                        existing.scopes = ",".join(merged)
+
+                    db.session.add(existing)
+                    db.session.flush()
+                    saved.append(existing.serialize())
+                else:
+                    new_scopes = ",".join(scopes_list) if scopes_list else ""
+                    sa = SocialAccount(
+                        user_id=user.id,
+                        provider=provider,
+                        provider_user_id=pid,
+                        account_name=name,
+                        access_token=access_token,
+                        instagram_business_id=instagram_business_id,
+                        scopes=new_scopes
+                    )
+                    db.session.add(sa)
+                    db.session.flush()
+                    saved.append(sa.serialize())
+            except Exception as e:
+                current_app.logger.exception("oauth_save_selection per-account DB error, rolling back")
                 try:
-                    if not existing.user_id:
-                        existing.user_id = user.id
-                    elif int(existing.user_id) == user.id:
-                        existing.user_id = user.id
-                    # else leave as-is (do not override another user's ownership)
+                    db.session.rollback()
                 except Exception:
-                    existing.user_id = user.id
+                    current_app.logger.exception("db rollback failed after per-account exception (oauth_save_selection)")
+                return jsonify({'success': False, 'error': 'db_error', 'message': str(e)}), 500
 
-                # merge scopes if provided
-                if scopes_list:
-                    existing_scopes = []
-                    if existing.scopes:
-                        if isinstance(existing.scopes, str):
-                            existing_scopes = [s.strip() for s in existing.scopes.replace("{","").replace("}","").split(",") if s.strip()]
-                        elif isinstance(existing.scopes, (list, tuple)):
-                            existing_scopes = list(existing.scopes)
-                    merged = list(dict.fromkeys(existing_scopes + scopes_list))
-                    existing.scopes = ",".join(merged)
+        # commit all
+        try:
+            db.session.commit()
+        except Exception as e:
+            current_app.logger.exception("oauth_save_selection commit failed")
+            try:
+                db.session.rollback()
+            except Exception:
+                current_app.logger.exception("db rollback failed after commit exception (oauth_save_selection)")
+            return jsonify({'success': False, 'error': 'db_error', 'message': str(e)}), 500
 
-                db.session.add(existing)
-                db.session.flush()
-                saved.append(existing.serialize())
-            else:
-                new_scopes = ",".join(scopes_list) if scopes_list else ""
-                sa = SocialAccount(
-                    user_id=user.id,
-                    provider=provider,
-                    provider_user_id=pid,
-                    account_name=name,
-                    access_token=access_token,
-                    instagram_business_id=instagram_business_id,
-                    scopes=new_scopes
-                )
-                db.session.add(sa)
-                db.session.flush()
-                saved.append(sa.serialize())
-
-        db.session.commit()
         return jsonify({'success': True, 'connected': saved}), 200
 
     except Exception as e:
-        current_app.logger.exception("oauth_save_selection failed")
-        db.session.rollback()
+        current_app.logger.exception("oauth_save_selection failed unexpectedly")
+        try:
+            db.session.rollback()
+        except Exception:
+            current_app.logger.exception("db rollback failed in unexpected except (oauth_save_selection)")
         return jsonify({'success': False, 'error': 'db_error', 'message': str(e)}), 500
-
-
-
+        
 @app.route('/api/oauth/facebook/revoke', methods=['POST'])
 @app.route('/api/oauth/instagram/revoke', methods=['POST'])
 def oauth_revoke():
@@ -5434,6 +5638,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
