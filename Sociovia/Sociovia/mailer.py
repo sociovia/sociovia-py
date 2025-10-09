@@ -13,8 +13,8 @@ def send_mail(to_addrs, subject, body):
     smtp_host = "smtp.gmail.com"       # Replace with your SMTP server if different
     smtp_port_tls = 25
     smtp_port_ssl = 465
-    smtp_user = "noreply.sociovia@gmail.com"  # Replace with your email
-    smtp_pass = "lpik fvnp ysro zjbr"    # Replace with your App Password / SMTP password
+    smtp_user = "sociovia.ai@gmail.com"  # Replace with your email
+    smtp_pass = "dinm hrwm igpd sjyy"    # Replace with your App Password / SMTP password
     mail_from = smtp_user
     # ==================================
 
