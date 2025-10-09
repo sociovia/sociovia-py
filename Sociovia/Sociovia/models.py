@@ -93,5 +93,6 @@ class SocialAccount(db.Model):
     access_token = db.Column(db.Text, nullable=True)
     token_expires_at = db.Column(db.DateTime, nullable=True)
     profile = db.Column(db.JSON, nullable=True)
+    instagram_business_id = db.Column(db.String(255), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=db.func.now())
     updated_at = db.Column(db.DateTime, default=db.func.now(), onupdate=db.func.now())
