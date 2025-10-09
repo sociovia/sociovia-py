@@ -728,15 +728,19 @@ def get_user_from_request(require: bool = True):
 
 from flask import request, jsonify
 import os, json
+from flask import current_app
+import os, time, json
+from botocore.client import Config as BotoConfig
 
 @app.route("/api/workspace/setup", methods=["POST"])
 def api_workspace_setup_create():
     """
-    Create a new workspace (multipart/form-data). Always creates a NEW workspace record.
+    Create a new workspace (multipart/form-data). Uploads files to DigitalOcean Spaces
+    when SPACE_* env vars are present, otherwise falls back to local uploads.
     """
     try:
+        # --- auth / basic checks (unchanged) ---
         user = get_user_from_request(require=True)
-        print(user)
         if not user:
             return jsonify({"success": False, "error": "not_authenticated"}), 401
         user_id = user.id
@@ -745,7 +749,6 @@ def api_workspace_setup_create():
             return jsonify({"success": False, "error": "content_type_must_be_multipart"}), 415
 
         form = request.form
-        # Accept either shape for descriptions (compatibility)
         description = (form.get("describe_business") or form.get("description") or "").strip()
         audience_description = (form.get("describe_audience") or form.get("audience_description") or "").strip()
 
@@ -764,7 +767,7 @@ def api_workspace_setup_create():
         logo_file = request.files.get("logo")
         creatives_files = request.files.getlist("creatives")
 
-        # --- parsing helpers (preserve name + website) ---
+        # --- small parsing helpers (same as your code) ---
         def parse_competitors(raw: str):
             raw = (raw or "").strip()
             if not raw:
@@ -776,7 +779,6 @@ def api_workspace_setup_create():
                     for item in parsed:
                         if isinstance(item, dict):
                             name = str(item.get("name") or "").strip()
-                            # accept website or url keys
                             website = (item.get("website") or item.get("url") or "").strip() or None
                             if name:
                                 out.append({"name": name, "website": website})
@@ -787,7 +789,6 @@ def api_workspace_setup_create():
                     return out
             except Exception:
                 pass
-            # fallback: comma separated names (no websites)
             parts = [p.strip() for p in raw.split(",") if p.strip()]
             return [{"name": p, "website": None} for p in parts]
 
@@ -819,7 +820,7 @@ def api_workspace_setup_create():
         indirect_competitors = parse_competitors(indirect_competitors_raw)
         social_links = parse_social_links(social_links_raw)
 
-        # --- validation ---
+        # --- validation (same checks) ---
         errors = []
         if not business_name:
             errors.append("business_name_required")
@@ -849,56 +850,156 @@ def api_workspace_setup_create():
         if errors:
             return jsonify({"success": False, "errors": errors}), 400
 
-        # --- persist files ---
-        user_upload_dir = os.path.join(UPLOAD_BASE, str(user_id))
-        os.makedirs(user_upload_dir, exist_ok=True)
+        # ---------------------------------------------------------------------
+        #  Storage config — using your env var naming
+        # ---------------------------------------------------------------------
+        SPACE_NAME = os.environ.get("SPACE_NAME", "")
+        SPACE_REGION = os.environ.get("SPACE_REGION", "")
+        SPACE_ENDPOINT = f"https://{SPACE_REGION}.digitaloceanspaces.com" if SPACE_REGION else ""
+        # optional CDN base using the pattern you used
+        SPACE_CDN = f"https://{SPACE_NAME}.{SPACE_REGION}.cdn.digitaloceanspaces.com" if SPACE_NAME and SPACE_REGION else ""
+        ACCESS_KEY = os.environ.get("ACCESS_KEY")
+        SECRET_KEY = os.environ.get("SECRET_KEY")
 
-        logo_filename = secure_filename(logo_file.filename)
-        logo_abs_name = "logo_" + logo_filename
-        logo_abs_path = os.path.join(user_upload_dir, logo_abs_name)
-        logo_file.save(logo_abs_path)
-        logo_path_rel = os.path.join(str(user_id), logo_abs_name).replace(os.path.sep, "/")
+        use_spaces = bool(SPACE_NAME and SPACE_REGION and SPACE_ENDPOINT and ACCESS_KEY and SECRET_KEY)
 
-        creatives_paths = []
-        for idx, f in enumerate(creatives_files or []):
-            if not f or not f.filename:
-                continue
-            if not allowed_file(f.filename):
-                continue
-            safe = secure_filename(f.filename)
-            abs_name = f"creative_{idx}_{safe}"
-            abs_path = os.path.join(user_upload_dir, abs_name)
-            f.save(abs_path)
-            creatives_paths.append(os.path.join(str(user_id), abs_name).replace(os.path.sep, "/"))
+        s3_client = None
+        if use_spaces:
+            import boto3
+            s3_client = boto3.client(
+                "s3",
+                region_name=SPACE_REGION,
+                endpoint_url=SPACE_ENDPOINT,
+                aws_access_key_id=ACCESS_KEY,
+                aws_secret_access_key=SECRET_KEY,
+                config=BotoConfig(signature_version="s3v4"),
+            )
 
-        # --- CREATE a NEW workspace (do NOT override existing) ---
-        import json as _json
-        workspace = Workspace(user_id=user_id)  # ALWAYS new
+        def build_public_url(key: str) -> str:
+            # prefer CDN if SPACE_CDN is present
+            if SPACE_CDN:
+                return f"{SPACE_CDN.rstrip('/')}/{key}"
+            # default: https://{SPACE_NAME}.{SPACE_REGION}.digitaloceanspaces.com/{key}
+            return f"https://{SPACE_NAME}.{SPACE_REGION}.digitaloceanspaces.com/{key}"
+
+        def _upload_to_spaces_fileobj(fileobj, bucket_key, content_type=None):
+            extra_args = {}
+            if content_type:
+                extra_args["ContentType"] = content_type
+            extra_args["ACL"] = "public-read"
+            # fileobj should be a readable stream (BytesIO / werkzeug FileStorage.stream)
+            s3_client.upload_fileobj(fileobj, SPACE_NAME, bucket_key, ExtraArgs=extra_args)
+            return build_public_url(bucket_key)
+
+        # ---------------------------------------------------------------------
+        #  Create DB row first (so we can name objects using workspace.id)
+        # ---------------------------------------------------------------------
+        workspace = Workspace(user_id=user_id)
         workspace.business_name = business_name
         workspace.business_type = business_type
         workspace.registered_address = registered_address
         workspace.b2b_b2c = b2b_b2c
         workspace.industry = industry
-        # map to DB columns used in your snapshot
         workspace.description = description
         workspace.audience_description = audience_description
         workspace.website = website or None
-        workspace.direct_competitors = _json.dumps(direct_competitors)  # structured JSON with website preserved
-        workspace.indirect_competitors = _json.dumps(indirect_competitors)
-        workspace.social_links = _json.dumps(social_links)
+        workspace.direct_competitors = json.dumps(direct_competitors)
+        workspace.indirect_competitors = json.dumps(indirect_competitors)
+        workspace.social_links = json.dumps(social_links)
         workspace.usp = usp
-        workspace.logo_path = logo_path_rel
-        workspace.creatives_paths = _json.dumps(creatives_paths)
         workspace.additional_remarks = additional_remarks or None
 
         db.session.add(workspace)
-        db.session.commit()
+        # flush to get workspace.id without committing
+        db.session.flush()
+        ws_id = workspace.id  # now available
 
-        logo_url = f"{APP_BASE_URL.rstrip('/')}/uploads/workspaces/{workspace.user_id}/{os.path.basename(logo_abs_path)}"
-        creative_urls = [
-            f"{APP_BASE_URL.rstrip('/')}/uploads/workspaces/{workspace.user_id}/{os.path.basename(p)}"
-            for p in creatives_paths
-        ]
+        # ---------------------------------------------------------------------
+        #  Upload files (Spaces or local), keep track of uploaded keys/urls for cleanup
+        # ---------------------------------------------------------------------
+        uploaded_space_keys = []   # keys in the bucket we uploaded (for cleanup on error)
+        uploaded_urls = []         # urls for creatives
+        logo_url = None
+
+        try:
+            if use_spaces:
+                prefix = f"workspaces/{ws_id}"
+                # upload logo
+                if logo_file and getattr(logo_file, "filename", None):
+                    safe_name = secure_filename(logo_file.filename)
+                    logo_key = f"{prefix}/logo_{int(time.time())}_{safe_name}"
+                    # ensure stream at start
+                    try:
+                        logo_file.stream.seek(0)
+                    except Exception:
+                        pass
+                    logo_url = _upload_to_spaces_fileobj(logo_file.stream, logo_key, content_type=logo_file.mimetype)
+                    uploaded_space_keys.append(logo_key)
+
+                # upload creatives
+                for idx, f in enumerate(creatives_files or []):
+                    if not f or not f.filename:
+                        continue
+                    if not allowed_file(f.filename):
+                        continue
+                    safe_name = secure_filename(f.filename)
+                    creative_key = f"{prefix}/creative_{idx}_{int(time.time())}_{safe_name}"
+                    try:
+                        f.stream.seek(0)
+                    except Exception:
+                        pass
+                    url = _upload_to_spaces_fileobj(f.stream, creative_key, content_type=f.mimetype)
+                    uploaded_space_keys.append(creative_key)
+                    uploaded_urls.append(url)
+            else:
+                # fallback: save locally under UPLOAD_BASE/workspaces/{user_id}/
+                user_upload_dir = os.path.join(UPLOAD_BASE, "workspaces", str(user_id))
+                os.makedirs(user_upload_dir, exist_ok=True)
+
+                if logo_file and getattr(logo_file, "filename", None):
+                    logo_filename = secure_filename(logo_file.filename)
+                    logo_abs_name = f"logo_{int(time.time())}_{logo_filename}"
+                    logo_abs_path = os.path.join(user_upload_dir, logo_abs_name)
+                    logo_file.save(logo_abs_path)
+                    logo_url = f"{APP_BASE_URL.rstrip('/')}/uploads/workspaces/{user_id}/{os.path.basename(logo_abs_path)}"
+
+                for idx, f in enumerate(creatives_files or []):
+                    if not f or not f.filename:
+                        continue
+                    if not allowed_file(f.filename):
+                        continue
+                    safe = secure_filename(f.filename)
+                    abs_name = f"creative_{idx}_{int(time.time())}_{safe}"
+                    abs_path = os.path.join(user_upload_dir, abs_name)
+                    f.save(abs_path)
+                    uploaded_urls.append(f"{APP_BASE_URL.rstrip('/')}/uploads/workspaces/{user_id}/{os.path.basename(abs_path)}")
+
+            # --- assign URLs to workspace fields and commit ---
+            workspace.logo_path = logo_url or None
+            workspace.creatives_paths = json.dumps(uploaded_urls)
+            db.session.commit()
+
+        except Exception as upload_exc:
+            # attempt cleanup: delete uploaded objects from spaces if any
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+            if use_spaces and s3_client and uploaded_space_keys:
+                # delete uploaded keys in a single call (quiet)
+                try:
+                    delete_objs = {"Objects": [{"Key": k} for k in uploaded_space_keys]}
+                    s3_client.delete_objects(Bucket=SPACE_NAME, Delete=delete_objs)
+                except Exception:
+                    logger.exception("Failed to cleanup uploaded keys after error")
+
+            logger.exception("Upload/commit failed")
+            return jsonify({"success": False, "error": "storage_or_db_failure", "details": str(upload_exc)}), 500
+
+        # --- success response (same shape you used) ---
+        logo_url_out = workspace.logo_path
+        creative_urls_out = json.loads(workspace.creatives_paths or "[]")
 
         log_action(user.email or "system", "workspace_create", user.id, {"workspace_id": workspace.id})
 
@@ -916,15 +1017,19 @@ def api_workspace_setup_create():
                 "indirect_competitors": indirect_competitors,
                 "social_links": social_links,
                 "usp": workspace.usp,
-                "logo_url": logo_url,
-                "creative_urls": creative_urls,
+                "logo_url": logo_url_out,
+                "creative_urls": creative_urls_out,
             }
         }), 201
 
     except Exception as e:
-        logger.exception("Workspace create failed")
+        logger.exception("Workspace create failed (top-level)")
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
         return jsonify({"success": False, "error": "internal_server_error", "details": str(e)}), 500
-
+        
 def allowed_file(filename):
     """Check if file extension is allowed."""
     allowed_extensions = {'.png', '.jpg', '.jpeg', '.gif'}
@@ -5643,6 +5748,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
