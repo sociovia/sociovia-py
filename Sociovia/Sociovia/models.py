@@ -98,19 +98,19 @@ class SocialAccount(db.Model):
     updated_at = db.Column(db.DateTime, default=db.func.now(), onupdate=db.func.now())
     
     def serialize(self):
-    """Return a JSON-serializable representation of the SocialAccount."""
-    return {
-        "id": self.id,
-        "provider": self.provider,
-        "provider_user_id": self.provider_user_id,
-        "account_name": self.account_name,
-        "user_id": self.user_id,
-        "scopes": self.scopes,
-        "access_token": bool(self.access_token),  # don't expose token
-        "instagram_business_id": self.instagram_business_id,
-        "profile": self.profile,
-        "token_expires_at": self.token_expires_at.isoformat() if self.token_expires_at else None,
-        "created_at": self.created_at.isoformat() if self.created_at else None,
-        "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-    }
+        """Return a JSON-serializable representation of the SocialAccount."""
+        return {
+            "id": self.id,
+            "provider": self.provider,
+            "provider_user_id": self.provider_user_id,
+            "account_name": self.account_name,
+            "user_id": self.user_id,
+            "scopes": self.scopes,
+            "access_token": bool(self.access_token),  # don't expose token
+            "instagram_business_id": self.instagram_business_id,
+            "profile": self.profile,
+            "token_expires_at": self.token_expires_at.isoformat() if self.token_expires_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
 
