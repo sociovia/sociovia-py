@@ -87,6 +87,7 @@ class SocialAccount(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     account_name = db.Column(db.String(255))
     provider = db.Column(db.String(50), nullable=False)  # 'facebook'
+    scopes = Column(Text) 
     provider_user_id = db.Column(db.String(255), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     access_token = db.Column(db.Text, nullable=True)
