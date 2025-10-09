@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import DeclarativeBase
 from flask_session import Session
 from flask_cors import CORS, cross_origin
+from flask import current_app
 
 #from config import Config
 """
@@ -5566,6 +5567,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
