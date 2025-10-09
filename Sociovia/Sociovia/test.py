@@ -65,7 +65,12 @@ class Config:
     VERIFY_TTL_MIN = int(os.getenv("VERIFY_TTL_MIN", 15))
     ADMIN_LINK_TTL_HOURS = int(os.getenv("ADMIN_LINK_TTL_HOURS", 48))
     PERMANENT_SESSION_LIFETIME = timedelta(days=int(os.getenv("PERMANENT_SESSION_LIFETIME_DAYS", 7)))
-
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,        # ping a connection before using it
+        "pool_recycle": int(os.getenv("SQLALCHEMY_POOL_RECYCLE", 1800)),  # seconds
+        "pool_size": int(os.getenv("SQLALCHEMY_POOL_SIZE", 10)),
+        "max_overflow": int(os.getenv("SQLALCHEMY_MAX_OVERFLOW", 20)),
+    }
 #==============================================================================================================================================================================================================
 # ---------------- Setup ----------------
 
@@ -5638,6 +5643,7 @@ if __name__ == "__main__":
         #db.create_all()
         debug_flag = os.getenv("FLASK_ENV", "development") != "production"
         app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=debug_flag)
+
 
 
 
