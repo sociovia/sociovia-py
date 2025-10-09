@@ -3,9 +3,7 @@ import ssl
 from email.message import EmailMessage
 """
 def send_mail(to_addrs, subject, body):
-    """
-    Quick hardcoded SMTP sender for testing.
-    """
+    
     if isinstance(to_addrs, str):
         to_addrs = [to_addrs]
 
