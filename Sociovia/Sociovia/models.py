@@ -21,7 +21,7 @@ class User(db.Model):
     status = db.Column(db.String(32), default="pending_verification")  # pending_verification, under_review, approved, rejected
     verification_code_hash = db.Column(db.String(256))
     verification_expires_at = db.Column(db.DateTime)
-    rejection_reason = db.Column(db.Text)
+    rejection_reason = db.Column(db.String(120))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
