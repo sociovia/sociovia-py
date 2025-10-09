@@ -85,6 +85,7 @@ class Workspace(db.Model):
 class SocialAccount(db.Model):
     __tablename__ = "social_accounts"
     id = db.Column(db.Integer, primary_key=True)
+    account_name = db.Column(db.String(255))
     provider = db.Column(db.String(50), nullable=False)  # 'facebook'
     provider_user_id = db.Column(db.String(255), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
